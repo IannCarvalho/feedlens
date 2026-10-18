@@ -342,12 +342,13 @@ curl -X POST https://seu-host/api/feedbacks \
 
 **Endpoint:** `GET /api/feedbacks`
 
-**Descrição:** Lista os feedbacks analisados (spam excluído), do mais recente para o mais antigo, com paginação. **Exige credencial** quando `DASHBOARD_PASSWORD` ou `API_READ_TOKEN` estão definidos (veja *API de leitura*, acima): `Authorization: Bearer <API_READ_TOKEN>` ou a sessão do painel; senão, `401`.
+**Descrição:** Lista os feedbacks analisados, do mais recente para o mais antigo, com paginação. Por padrão o que a IA marcou como spam fica de fora (use `spam` para revisá-lo). **Exige credencial** quando `DASHBOARD_PASSWORD` ou `API_READ_TOKEN` estão definidos (veja *API de leitura*, acima): `Authorization: Bearer <API_READ_TOKEN>` ou a sessão do painel; senão, `401`.
 
 **Parâmetros de query:**
 - `page` — número da página (padrão `1`)
 - `per_page` — itens por página (padrão `20`, máximo `100`)
 - `sentiment` — filtro opcional (`POSITIVO`, `NEGATIVO` ou `INCONCLUSIVO`)
+- `spam` — `exclude` (padrão, sem spam), `include` (tudo) ou `only` (só os marcados como spam). Outro valor responde `400`.
 
 **Resposta de Sucesso (200 OK):**
 ```json
@@ -370,7 +371,8 @@ curl -X POST https://seu-host/api/feedbacks \
     "has_next": false,
     "has_prev": false
   },
-  "sentiment": null
+  "sentiment": null,
+  "spam": "exclude"
 }
 ```
 
@@ -378,7 +380,15 @@ curl -X POST https://seu-host/api/feedbacks \
 
 **Endpoint:** `GET /api/feedbacks/<id>`
 
-**Descrição:** Retorna um feedback específico pelo seu UUID. Mesma autenticação da listagem. Responde `400` para um id malformado e `404` quando não existe.
+**Descrição:** Retorna um feedback específico pelo seu UUID. Mesma autenticação da listagem. Responde `400` para um id malformado e `404` quando não existe. Funciona também para feedbacks marcados como spam.
+
+### Corrigir a Classificação de Spam
+
+**Endpoint:** `PATCH /api/feedbacks/<id>`
+
+**Descrição:** Revisão humana do que a IA marcou como spam. Corpo: `{"is_spam": true}` ou `{"is_spam": false}` (só booleano; só esse campo muda, sentimento e funcionalidades continuam os da análise). Devolve o feedback atualizado, e repetir o mesmo valor é seguro. Listas, gráficos e o resumo semanal passam a refletir a correção.
+
+**Autenticação:** só a sessão do painel com o header `X-CSRF-Token`. O `API_READ_TOKEN` **não** vale aqui. Sem `DASHBOARD_PASSWORD` responde `403` (`auth_not_configured`); sem sessão, `401`; com CSRF inválido, `403`. Também responde `400` para id ou corpo inválidos e `404` quando o feedback não existe.
 
 ### Health Check
 
@@ -430,8 +440,8 @@ O painel é uma SPA Vue 3 servida pelo Flask na raiz. A navegação acontece no 
 ### Rotas do painel
 
 - **Visão geral (`/`):** contagem e indicadores, distribuição de sentimentos, funcionalidades mais solicitadas e feedbacks recentes.
-- **Feedbacks (`/feedbacks`):** tabela paginada com filtro por sentimento e navegação para o detalhe.
-- **Detalhe (`/feedbacks/<id>`):** texto original, sentimento, status de spam e funcionalidades identificadas.
+- **Feedbacks (`/feedbacks`):** tabela paginada com filtros por sentimento e por spam (`Sem spam`, `Com spam`, `Só spam`) e navegação para o detalhe.
+- **Detalhe (`/feedbacks/<id>`):** texto original, sentimento, status de spam e funcionalidades identificadas. Com login ligado, os botões “Marcar como spam” e “Não é spam” corrigem a classificação da IA.
 - **Provedores (`/providers`):** cadeia de provedores, cadastro e teste de chaves no cofre BYOK, habilitação, remoção e reordenação.
 - **Login (`/login`):** tela pública do próprio SPA; a senha é validada pelo Flask e a sessão usa cookie assinado.
 
