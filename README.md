@@ -86,7 +86,7 @@ O Flask serve o `frontend/dist` gerado pelo Vite em `app/static/spa/`. O painel 
 ### Pré-requisitos
 
 - Python 3.10 ou superior
-- Node.js 20.19+ ou 22.12+, para compilar o painel (não é necessário com Docker)
+- Node.js 24.15 ou superior, para compilar o painel (não é necessário com Docker)
 - PostgreSQL ou outro banco de dados SQL (ou SQLite para desenvolvimento)
 - Chave de API de pelo menos um provedor de LLM (OpenAI, Anthropic ou Google Gemini), no servidor ou enviada por requisição
 
