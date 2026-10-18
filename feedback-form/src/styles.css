@@ -1,0 +1,101 @@
+/*
+ * Cores: texto e fundo verificados contra WCAG AA (4.5:1). O ciano e o âmbar
+ * da marca NÃO servem como cor de texto sobre claro; por isso há versões
+ * "tinta" (escurecidas) para texto/borda e o âmbar só aparece como fundo de
+ * botão, com texto grafite (8,7:1).
+ */
+:root {
+  --bg: #f1efea;
+  --surface: #fff;
+  --ink: #14171f;
+  --muted: #5c6070;
+  --line: #d9d6cf;
+  --field-border: #6b6f7d;
+  --amber: #f5a93a;
+  --focus: #1a6f7c;
+  --error: #a84800;
+  --ok: #00775a;
+
+  color-scheme: light;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    'Helvetica Neue',
+    Arial,
+    sans-serif;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(1.5rem, 1.2rem + 1.5vw, 2rem);
+  line-height: 1.2;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 2.75rem;
+  padding: 0.625rem 1.25rem;
+  border: 0;
+  border-radius: 0.5rem;
+  background: var(--amber);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.button:hover:not(:disabled) {
+  background: #eb9d26;
+}
+
+.button:disabled {
+  cursor: progress;
+  opacity: 0.85;
+}
+
+.button-secondary {
+  background: var(--surface);
+  border: 1px solid var(--field-border);
+}
+
+.button-secondary:hover:not(:disabled) {
+  background: var(--bg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition: none !important;
+  }
+}

@@ -1,0 +1,65 @@
+<section class="intro">
+  <h1>Conte o que você achou</h1>
+  <p class="lead">
+    Sua opinião ajuda a melhorar {{ config.productName }}. Leva menos de um minuto e não precisa de
+    cadastro.
+  </p>
+</section>
+
+<form class="card" [formRoot]="feedbackForm" novalidate>
+  <label class="label" for="feedback-text">Seu feedback</label>
+  <p class="hint" id="feedback-hint">
+    Escreva do seu jeito: o que gostou, o que não funcionou ou o que poderia ser melhor. Evite
+    incluir senhas ou dados pessoais.
+  </p>
+
+  <textarea
+    #textArea
+    id="feedback-text"
+    class="field"
+    rows="7"
+    autocomplete="off"
+    [formField]="feedbackForm.text"
+    [attr.aria-describedby]="showError() ? 'feedback-hint feedback-error' : 'feedback-hint'"
+    [attr.aria-invalid]="showError() ? 'true' : null"
+    (focus)="onFocus()"
+  ></textarea>
+
+  <div class="meta">
+    @if (showError()) {
+      <p class="error" id="feedback-error" role="alert">
+        {{ feedbackForm.text().errors()[0].message }}
+      </p>
+    } @else {
+      <span></span>
+    }
+    <p class="count" [class.count-over]="length() > maxChars">{{ length() }} / {{ maxChars }}</p>
+  </div>
+
+  @if (failureMessage(); as message) {
+    <p class="alert" role="alert">{{ message }}</p>
+  }
+
+  <div class="actions">
+    <button
+      class="button"
+      type="submit"
+      [attr.aria-busy]="session.sending()"
+      [disabled]="session.sending()"
+    >
+      @if (session.sending()) {
+        <span class="spinner" aria-hidden="true"></span>
+        Enviando…
+      } @else if (session.hasFailed()) {
+        Tentar de novo
+      } @else {
+        Enviar feedback
+      }
+    </button>
+    <p class="status" role="status">
+      @if (session.slow()) {
+        Ainda enviando. Pode levar alguns segundos, não feche esta página.
+      }
+    </p>
+  </div>
+</form>

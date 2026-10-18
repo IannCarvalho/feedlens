@@ -41,6 +41,9 @@ feedlens/
 │   ├── src/stores/                # Estado Pinia (feedbacks, provedores, sessão)
 │   ├── src/views/                 # Dashboard, feedbacks, provedores e login
 │   └── src/router/                # Rotas do painel e tela pública de login
+├── feedback-form/                 # Formulário público (Angular 22), projeto separado
+│   ├── public/config.json         # URL da API e modo demonstração, lidos em tempo de execução
+│   └── src/app/                   # core (envio, mocks), features (formulário, obrigado, demo)
 ├── migrations/                    # Migrações de banco de dados (Alembic)
 ├── .env-example                   # Exemplo de variáveis de ambiente
 ├── Dockerfile                     # Build multi-stage do front e da aplicação
@@ -51,6 +54,26 @@ feedlens/
 ```
 
 O Flask serve o `frontend/dist` gerado pelo Vite em `app/static/spa/`. O painel é uma SPA: o navegador recebe o mesmo `index.html` na raiz e nos deep-links, e o Vue Router decide qual tela exibir. A API continua no Flask, sob `/api/...`.
+
+## Formulário público (`feedback-form`)
+
+O painel acima é para a equipe. O `feedback-form/` é um segundo front, **separado**, para o cliente final: uma tela só, onde ele escreve e envia o feedback. Não tem login, não mostra feedbacks de outras pessoas e não fala em termos técnicos.
+
+- **Stack:** Angular 22 (zoneless, Signal Forms), TypeScript e Vitest. Exige Node 24.15 ou superior.
+- **Separação:** projeto próprio (`package.json`, build, CI e deploy). O Flask **não** o serve, então o cookie de sessão do painel nunca chega a ele. Em produção, hospede o build (`feedback-form/dist/feedback-form/browser`) como site estático, de preferência em outro subdomínio.
+- **API:** usa só `POST /api/feedbacks` com `{ id, feedback }`. O `id` é um UUID gerado no navegador e reaproveitado nas tentativas: reenviar é seguro, e um `409` conta como "já recebemos". Um `GET /health` sem CORS acorda o servidor enquanto a pessoa escreve.
+- **Configuração em tempo de execução:** `public/config.json` (`apiBaseUrl`, `useMock`, `productName`), sem recompilar.
+- **CORS:** em produção, liste a origem do formulário em `CORS_ORIGINS`.
+- **Chave de ingestão (`INGEST_API_KEY`):** um site público não guarda segredo. Se a chave estiver ligada, o formulário recebe `401`. Para recebimento público, é preciso uma rota de ingestão sem segredo (origem permitida, limite próprio e teto de gasto). Isso é uma mudança de backend, fora deste front.
+
+```powershell
+cd feedback-form
+npm ci
+npm start          # http://127.0.0.1:4200, em modo demonstração (dados mockados)
+npm run typecheck; npm run lint; npm test; npm run build
+```
+
+**Modo demonstração** (`"useMock": true`, o padrão do `config.json` do repositório): não usa servidor. Um painel recolhido, que não existe com `useMock: false`, troca o cenário (envio normal, repetido, lento, muitos envios, instável, sem conexão, recusado), preenche exemplos e mostra o corpo que seria enviado. Também dá para abrir `?cenario=sem-conexao` na URL. Para usar a API real, troque o `config.json` por `{ "apiBaseUrl": "https://sua-api", "useMock": false, "productName": "Seu Produto" }`.
 
 ## Tecnologias Utilizadas
 
@@ -74,6 +97,7 @@ O Flask serve o `frontend/dist` gerado pelo Vite em `app/static/spa/`. O painel 
   - Vite e TypeScript
   - PrimeVue e PrimeIcons (componentes e ícones)
   - Pinia (estado), Vue Router (navegação) e Chart.js (gráficos)
+  - Formulário público: Angular 22 (zoneless, Signal Forms), em `feedback-form/`
 
 - **Envio de E-mail:**
   - SMTP (via `smtplib` do Python)
