@@ -433,6 +433,20 @@ Ao salvar ou trocar uma chave, o app a testa antes (`verify`, padrão `true`): s
 
 **Rotação da chave de cifra:** ponha a nova antes da antiga (`FEEDLENS_ENCRYPTION_KEY="nova,antiga"`), reinicie, rode `flask rotate-llm-keys` e depois remova a antiga da variável.
 
+## Qualidade da classificação
+
+O prompt que decide sentimento, spam e funcionalidades fica em `ANALYSIS_SYSTEM_PROMPT` (`app/services/feedback_analyzer.py`). Para medir uma mudança nele (ou trocar o modelo) sem depender de impressão:
+
+```bash
+python -m evals.classification_eval --set dev                 # casos de ajuste
+python -m evals.classification_eval --set holdout --runs 2    # casos reservados: rode só no fim
+python -m evals.classification_eval --prompt-file outro.txt   # testa um prompt alternativo
+```
+
+Os casos (`evals/cases.py`) cobrem elogios e críticas curtos, ironia, perguntas, pedidos de funcionalidade, feedback sobre atendimento (que não pode virar spam) e spam de verdade (propaganda, letra de música, texto sem sentido, injeção de prompt). O comando **chama a LLM de verdade** e gasta cota: cerca de uma chamada por caso e repetição. Falhas do provedor (cota, timeout) são contadas à parte, e não como erro de classificação. A suíte `pytest` testa o contrato do prompt e o harness sem chamar a LLM.
+
+> Atenção: se a cota do provedor acabar ou a chamada expirar, o analisador grava o resultado seguro padrão (`INCONCLUSIVO`, sem spam, sem funcionalidades, `analyzed_by` vazio). Esse feedback não foi analisado; um `INCONCLUSIVO` sem `analyzed_by` indica falha do provedor, não opinião neutra.
+
 ## Interface Web
 
 O painel é uma SPA Vue 3 servida pelo Flask na raiz. A navegação acontece no Vue Router, e um reload em qualquer deep-link continua funcionando porque o Flask entrega o `index.html` do build. A interface usa PrimeVue, PrimeIcons, Pinia e Chart.js.
