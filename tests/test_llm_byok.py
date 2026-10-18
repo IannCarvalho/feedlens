@@ -28,6 +28,7 @@ from app.llm.providers import PROVIDERS, parse_model_ref
 FEEDBACK_ID = "4042f20a-45f4-4647-8050-139ac16f610b"
 MESSAGES = [{"role": "user", "content": "responda em JSON"}]
 NO_KEYS = {"OPENAI_API_KEY": None, "ANTHROPIC_API_KEY": None, "GEMINI_API_KEY": None,
+           "GROQ_API_KEY": None, "OPENROUTER_API_KEY": None,
            "LLM_MODELS": [], "OPENAI_MODEL": "gpt-4o-mini", "BYOK_REQUEST_KEYS_ENABLED": True}
 
 

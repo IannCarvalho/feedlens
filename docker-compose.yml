@@ -30,6 +30,8 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       # Acesso: senha do painel, token de leitura da API, chave de ingestao e
       # chave do cofre de provedores. Vazias = recurso desligado/aberto (dev).
       DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-}

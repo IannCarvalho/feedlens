@@ -42,7 +42,8 @@ class Config:
         FLASK_ENV: Current environment (development/production)
         SQLALCHEMY_DATABASE_URI: Database connection string
         SQLALCHEMY_TRACK_MODIFICATIONS: Whether to track model modifications
-        OPENAI_API_KEY / ANTHROPIC_API_KEY / GEMINI_API_KEY: optional provider keys (BYOK)
+        OPENAI_API_KEY / ANTHROPIC_API_KEY / GEMINI_API_KEY / GROQ_API_KEY /
+            OPENROUTER_API_KEY: optional provider keys (BYOK)
         LLM_MODELS: ordered 'provider/model' chain (primary first, then fallbacks)
         EMAIL_*: Email server configuration
         EMAIL_RECIPIENTS: List of email addresses for weekly summary
@@ -100,6 +101,9 @@ class Config:
     OPENAI_API_KEY: Optional[str] = os.environ.get('OPENAI_API_KEY')
     ANTHROPIC_API_KEY: Optional[str] = os.environ.get('ANTHROPIC_API_KEY')
     GEMINI_API_KEY: Optional[str] = os.environ.get('GEMINI_API_KEY')
+    # Groq e OpenRouter têm camada gratuita (com limites): bons como reserva.
+    GROQ_API_KEY: Optional[str] = os.environ.get('GROQ_API_KEY')
+    OPENROUTER_API_KEY: Optional[str] = os.environ.get('OPENROUTER_API_KEY')
     # Ordem de uso 'provedor/modelo' (principal primeiro, depois reservas),
     # ex.: anthropic/claude-haiku-4-5,openai/gpt-4o-mini. Vazio = todo
     # provedor com chave, no modelo padrão de app/llm/providers.py.

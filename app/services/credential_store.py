@@ -70,7 +70,7 @@ def create_credential(provider_id: str, api_key: str, model: Optional[str] = Non
                       ) -> ProviderCredential:
     """Cifra e salva. ``verified`` = (ok, kind) de um teste feito antes."""
     provider = get_provider(provider_id)
-    model = validate_model_name(model) if model else provider.default_model
+    model = validate_model_name(model, provider) if model else provider.default_model
     if db.session.scalar(select(func.count(ProviderCredential.id))) >= MAX_STORED_CREDENTIALS:
         raise CredentialLimitError()
     if _exists(provider.id, model):
@@ -100,7 +100,7 @@ def update_credential(row: ProviderCredential, *, model: Optional[str] = None,
                       verified: Optional[tuple[bool, Optional[str]]] = None,
                       ) -> ProviderCredential:
     if model is not None:
-        model = validate_model_name(model)
+        model = validate_model_name(model, get_provider(row.provider))
         if model != row.model:
             if _exists(row.provider, model, ignore_id=row.id):
                 raise DuplicateCredentialError()

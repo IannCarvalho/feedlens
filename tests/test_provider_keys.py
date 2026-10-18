@@ -45,7 +45,8 @@ def secured_app():
     application = create_app()
     application.config.update(
         TESTING=True, DASHBOARD_PASSWORD=PASSWORD, FEEDLENS_ENCRYPTION_KEY=_fernet_key(),
-        OPENAI_API_KEY=None, ANTHROPIC_API_KEY=None, GEMINI_API_KEY=None, LLM_MODELS=[])
+        OPENAI_API_KEY=None, ANTHROPIC_API_KEY=None, GEMINI_API_KEY=None,
+        GROQ_API_KEY=None, OPENROUTER_API_KEY=None, LLM_MODELS=[])
     with application.app_context():
         db.create_all()
         yield application
@@ -133,7 +134,8 @@ def test_requires_login(secured_app):
 def test_get_exposes_catalog_and_csrf_token(admin):
     body = admin.get(BASE).get_json()
     assert body["vault_enabled"] is True
-    assert {p["id"] for p in body["catalog"]} == {"openai", "anthropic", "gemini"}
+    assert {p["id"] for p in body["catalog"]} == {
+        "openai", "anthropic", "gemini", "groq", "openrouter"}
     assert body["providers"] == []
     assert body["csrf_token"]
 
@@ -457,3 +459,60 @@ def test_rotate_llm_keys_command_fails_when_the_vault_is_off(secured_app):
     secured_app.config.update(FEEDLENS_ENCRYPTION_KEY="")
     result = secured_app.test_cli_runner().invoke(args=["rotate-llm-keys"])
     assert result.exit_code != 0
+
+
+# ------------------------------------------------- Groq e OpenRouter no cofre
+
+GROQ_KEY = "gsk_AAAA1111BBBB2222c3d4"
+OPENROUTER_KEY = "sk-or-v1-EEEE5555FFFF6666e5f6"
+
+
+def test_vault_stores_openrouter_models_with_a_vendor_slash(admin):
+    with patch(PROBE, return_value=_ok("openrouter/google/gemma-4-31b-it:free")) as probe:
+        response = _create(admin, provider="openrouter", api_key=OPENROUTER_KEY,
+                           model="google/gemma-4-31b-it:free")
+    assert response.status_code == 201
+    item = response.get_json()
+    assert (item["provider"], item["model"]) == ("openrouter", "google/gemma-4-31b-it:free")
+    assert OPENROUTER_KEY not in response.get_data(as_text=True)
+    assert probe.call_args.args[1][0].model_ref == "openrouter/google/gemma-4-31b-it:free"
+
+    chain = store.stored_chain()
+    assert [c.model_ref for c in chain] == ["openrouter/google/gemma-4-31b-it:free"]
+    assert chain[0].api_key == OPENROUTER_KEY
+
+
+def test_vault_uses_each_new_providers_default_model(admin):
+    with patch(PROBE, return_value=_ok()):
+        groq = _create(admin, provider="groq", api_key=GROQ_KEY).get_json()
+        router = _create(admin, provider="openrouter", api_key=OPENROUTER_KEY).get_json()
+    assert groq["model"] == "llama-3.3-70b-versatile"
+    assert router["model"] == "openrouter/free"
+    assert [c.model_ref for c in store.stored_chain()] == [
+        "groq/llama-3.3-70b-versatile", "openrouter/openrouter/free"]
+
+
+def test_patch_model_follows_the_providers_slash_rule(admin):
+    with patch(PROBE, return_value=_ok()):
+        router = _create(admin, provider="openrouter", api_key=OPENROUTER_KEY).get_json()
+        paid = _create(admin).get_json()
+
+        changed = admin.patch(f"{BASE}/{router['id']}", json={"model": "google/gemma-4-31b-it:free"},
+                              headers=admin.csrf)
+        assert changed.status_code == 200
+        assert changed.get_json()["model"] == "google/gemma-4-31b-it:free"
+
+        # Nos provedores que já existiam a barra continua proibida.
+        refused = admin.patch(f"{BASE}/{paid['id']}", json={"model": "vendor/modelo"},
+                              headers=admin.csrf)
+    assert refused.status_code == 400
+    assert refused.get_json()["code"] == "invalid_model"
+
+
+@pytest.mark.parametrize("provider, model", [
+    ("openai", "vendor/modelo"), ("openrouter", "a/b/c"), ("groq", "../modelo")])
+def test_create_rejects_malformed_models_per_provider(admin, provider, model):
+    response = _create(admin, provider=provider, api_key=GROQ_KEY, model=model)
+    assert response.status_code == 400
+    assert response.get_json()["code"] == "invalid_provider"
+    assert db.session.query(ProviderCredential).count() == 0

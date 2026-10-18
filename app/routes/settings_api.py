@@ -157,7 +157,8 @@ def create_provider():
 
     try:
         provider = get_provider(str(body.get('provider', '')))
-        model = validate_model_name(body['model']) if body.get('model') else provider.default_model
+        model = (validate_model_name(body['model'], provider) if body.get('model')
+                 else provider.default_model)
     except ValueError as e:
         return _error(str(e), 400, 'invalid_provider')
     api_key = _validate_api_key(body.get('api_key'))
@@ -211,7 +212,7 @@ def update_provider(credential_id):
         changes['priority'] = priority
     if 'model' in body:
         try:
-            changes['model'] = validate_model_name(str(body['model']))
+            changes['model'] = validate_model_name(str(body['model']), get_provider(row.provider))
         except ValueError as e:
             return _error(str(e), 400, 'invalid_model')
     new_key = None
