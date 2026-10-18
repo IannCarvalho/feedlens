@@ -227,8 +227,9 @@ def create_app(config_class: Type[Config] = Config) -> Flask:
         from app.scheduling import register_cli
         register_cli(app)
 
-        from app.cli import register_vault_cli
+        from app.cli import register_analysis_cli, register_vault_cli
         register_vault_cli(app)
+        register_analysis_cli(app)
 
         logger.info(f'Application started in {config_class.FLASK_ENV} mode')
 

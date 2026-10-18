@@ -24,7 +24,7 @@ NEGATIVE = {
 def test_stats_empty_has_no_data(client):
     resp = client.get("/api/stats")
     assert resp.status_code == 200
-    assert resp.get_json() == {"has_data": False}
+    assert resp.get_json() == {"has_data": False, "unanalyzed": 0}
 
 
 def test_stats_with_data(client):

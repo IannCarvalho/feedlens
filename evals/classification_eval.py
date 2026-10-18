@@ -69,7 +69,7 @@ def main(argv=None) -> int:
     rows = []
     for outcome in outcomes:
         case, result = outcome["case"], outcome["result"]
-        if result.get("analyzed_by") is None:
+        if result.get("failure") or result.get("analyzed_by") is None:
             failed += 1
             rows.append({"id": case.id, "status": "falha do provedor"})
             continue

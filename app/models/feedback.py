@@ -11,6 +11,12 @@ from app.models.types import GUID
 # modelo e para quem grava, já que o código vem da saída da LLM.
 FEATURE_CODE_MAX_LENGTH = 50
 
+# Estado da análise da IA. "unanalyzed" = a IA não respondeu (cota, timeout,
+# resposta inválida...): sentimento e spam são só o valor padrão, não opinião.
+ANALYSIS_ANALYZED = 'analyzed'
+ANALYSIS_UNANALYZED = 'unanalyzed'
+ANALYSIS_STATUSES = (ANALYSIS_ANALYZED, ANALYSIS_UNANALYZED)
+
 
 def as_utc(value: datetime) -> datetime:
     """Devolve ``value`` com fuso UTC explícito.
@@ -32,6 +38,9 @@ class Feedback(db.Model):
         feedback_text: The actual feedback text
         sentiment: Analyzed sentiment (POSITIVO, NEGATIVO, INCONCLUSIVO)
         is_spam: Whether the feedback was classified as spam
+        analysis_status: 'analyzed' ou 'unanalyzed' (a IA não respondeu)
+        analysis_error: motivo da última falha da IA (rate_limit, timeout...)
+        analyzed_by: 'provedor/modelo' que analisou (None se não analisado)
         created_at: When the feedback was created
         requested_features: List of features requested in this feedback
     """
@@ -42,6 +51,11 @@ class Feedback(db.Model):
     feedback_text: Mapped[str] = mapped_column(Text, nullable=False)
     sentiment: Mapped[str | None] = mapped_column(String(20), nullable=True)
     is_spam: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    analysis_status: Mapped[str] = mapped_column(
+        String(12), nullable=False, default=ANALYSIS_ANALYZED,
+        server_default=ANALYSIS_ANALYZED, index=True)
+    analysis_error: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    analyzed_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
         index=True)
@@ -69,6 +83,9 @@ class Feedback(db.Model):
             'feedback': self.feedback_text,
             'sentiment': self.sentiment,
             'is_spam': self.is_spam,
+            'analysis_status': self.analysis_status,
+            'analysis_error': self.analysis_error,
+            'analyzed_by': self.analyzed_by,
             'created_at': as_utc(self.created_at).isoformat(),
             'requested_features': [feature.to_dict() for feature in self.requested_features]
         }

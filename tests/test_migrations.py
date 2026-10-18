@@ -69,3 +69,28 @@ def test_existing_rows_survive_upgrade(migrated_app):
         rows = connection.execute(
             text("SELECT feedback_text FROM feedbacks")).all()
     assert rows == [("antigo",)]
+
+
+def test_upgrade_marks_existing_rows_as_analyzed_and_adds_the_new_columns(migrated_app):
+    """Linhas antigas ficam 'analyzed' (não dá para saber quais foram o padrão)."""
+    upgrade(revision="0004")
+    with db.engine.begin() as connection:
+        connection.execute(text(
+            "INSERT INTO feedbacks (id, feedback_text, is_spam, created_at) "
+            "VALUES ('11111111-1111-1111-1111-111111111111', 'antigo', 0, "
+            "'2026-01-02 03:04:05')"))
+    upgrade()
+    with db.engine.connect() as connection:
+        row = connection.execute(text(
+            "SELECT analysis_status, analysis_error, analyzed_by FROM feedbacks")).one()
+    assert tuple(row) == ("analyzed", None, None)
+    indexes = {i["name"] for i in inspect(db.engine).get_indexes("feedbacks")}
+    assert "ix_feedbacks_analysis_status" in indexes
+
+
+def test_downgrade_from_0005_drops_the_analysis_columns(migrated_app):
+    upgrade()
+    downgrade(revision="0004")
+    columns = {c["name"] for c in inspect(db.engine).get_columns("feedbacks")}
+    assert {"analysis_status", "analysis_error", "analyzed_by"}.isdisjoint(columns)
+    assert "feedback_text" in columns

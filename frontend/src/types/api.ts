@@ -17,9 +17,19 @@ export interface Feedback {
   feedback: string
   sentiment: Sentiment | null
   is_spam: boolean
+  /** 'unanalyzed' = a IA não respondeu; sentimento e spam são só o padrão. */
+  analysis_status: AnalysisStatus
+  /** Motivo da última falha da IA (rate_limit, timeout...). */
+  analysis_error: string | null
+  /** 'provedor/modelo' que analisou; null se não analisado. */
+  analyzed_by: string | null
   created_at: string
   requested_features: RequestedFeature[]
 }
+
+export type AnalysisStatus = 'analyzed' | 'unanalyzed'
+/** Filtro da lista (`?analysis=`): tudo ou só os não analisados. */
+export type FeedbackAnalysisFilter = 'any' | 'unanalyzed'
 
 export interface Pagination {
   page: number
@@ -35,6 +45,7 @@ export interface FeedbackListResponse {
   pagination: Pagination
   sentiment: string | null
   spam: FeedbackSpamFilter
+  analysis: FeedbackAnalysisFilter
 }
 
 /** O que a lista faz com o que a IA marcou como spam (`?spam=`). */
@@ -115,6 +126,8 @@ export interface FeatureStat {
 
 export interface DashboardStats {
   has_data: boolean
+  /** Feedbacks que a IA não conseguiu analisar. */
+  unanalyzed?: number
   total_feedbacks?: number
   sentiment_counts?: SentimentCounts
   sentiment_percentages?: Record<keyof SentimentCounts, number>

@@ -9,9 +9,11 @@ from app.auth import api_read_required, auth_enabled, is_authenticated
 from app.csrf import CSRF_HEADER, csrf_is_valid
 from app.extensions import limiter
 from app.ingest_auth import ingest_key_required
-from app.models.feedback import FEATURE_CODE_MAX_LENGTH, Feedback, RequestedFeature
+from app.models.feedback import Feedback
 from app.services.feedback_analyzer import FeedbackAnalyzer
 from app.services.feedback_service import (
+    ANALYSIS_ANY,
+    ANALYSIS_FILTERS,
     SENTIMENTS,
     SPAM_EXCLUDE,
     SPAM_MODES,
@@ -130,9 +132,17 @@ def analyze_feedback():
     sentiment = analysis_result.get('sentiment', 'INCONCLUSIVO')
     is_spam = analysis_result.get('is_spam', False)
     requested_features = analysis_result.get('requested_features', [])
-    logger.info(
-        'Feedback id=%s analyzed: sentiment=%s is_spam=%s features=%d',
-        feedback_id, sentiment, is_spam, len(requested_features))
+    failure = analysis_result.get('failure')
+    if failure:
+        # A IA não respondeu (cota, timeout...): grava o feedback assim mesmo,
+        # marcado como não analisado, para achar e reprocessar depois.
+        logger.warning(
+            'Feedback id=%s saved WITHOUT analysis (%s); reanalyze later',
+            feedback_id, failure)
+    else:
+        logger.info(
+            'Feedback id=%s analyzed: sentiment=%s is_spam=%s features=%d',
+            feedback_id, sentiment, is_spam, len(requested_features))
 
     # Create feedback in database
     feedback = Feedback(
@@ -141,17 +151,7 @@ def analyze_feedback():
         sentiment=sentiment,
         is_spam=is_spam
     )
-
-    # Add requested features
-    for feature in requested_features:
-        requested_feature = RequestedFeature(
-            # A coluna é VARCHAR(50): no Postgres um código maior derruba o
-            # INSERT inteiro, então o limite é garantido aqui, na fronteira.
-            code=str(feature['code'])[:FEATURE_CODE_MAX_LENGTH],
-            reason=feature['reason'],
-            feedback=feedback
-        )
-        db.session.add(requested_feature)
+    FeedbackService.apply_analysis(feedback, analysis_result)
 
     # Save to database
     db.session.add(feedback)
@@ -169,8 +169,11 @@ def analyze_feedback():
         'sentiment': feedback.sentiment,
         'is_spam': feedback.is_spam,
         'requested_features': [feature.to_dict() for feature in feedback.requested_features],
-        # 'provedor/modelo' que fez a análise; null = resultado seguro padrão.
+        # 'provedor/modelo' que fez a análise; null = a IA não analisou.
         'analyzed_by': analysis_result.get('analyzed_by'),
+        # 'unanalyzed' quando a IA falhou; sentiment/is_spam são só o padrão.
+        'analysis_status': feedback.analysis_status,
+        'analysis_error': feedback.analysis_error,
     }), 201
 
 
@@ -186,6 +189,8 @@ def list_feedbacks():
         sentiment: optional filter (POSITIVO/NEGATIVO/INCONCLUSIVO)
         spam: exclude (default, no spam) | include (everything) | only (spam
             only, to review what the AI flagged)
+        analysis: any (default) | unanalyzed (only feedbacks the AI could not
+            analyze: quota, timeout...)
     """
     try:
         page = int(request.args.get('page', 1))
@@ -202,12 +207,19 @@ def list_feedbacks():
             'error': f'spam must be one of: {", ".join(SPAM_MODES)}',
         }), 400
 
+    analysis = request.args.get('analysis', ANALYSIS_ANY)
+    if analysis not in ANALYSIS_FILTERS:
+        return jsonify({
+            'error': f'analysis must be one of: {", ".join(ANALYSIS_FILTERS)}',
+        }), 400
+
     # Cap per_page to keep a single response bounded.
     per_page = min(per_page, 100)
 
     sentiment = request.args.get('sentiment')
     result = FeedbackService.get_filtered_feedbacks(
-        sentiment=sentiment, page=page, per_page=per_page, spam=spam)
+        sentiment=sentiment, page=page, per_page=per_page, spam=spam,
+        analysis=analysis)
     pagination = result['pagination']
 
     return jsonify({
@@ -222,6 +234,7 @@ def list_feedbacks():
         },
         'sentiment': sentiment,
         'spam': spam,
+        'analysis': analysis,
     }), 200
 
 
@@ -299,6 +312,53 @@ def review_feedback(feedback_id):
     return jsonify(feedback.to_dict()), 200
 
 
+@api.route('/feedbacks/<feedback_id>/reanalyze', methods=['POST'])
+@panel_write_required
+def reanalyze_feedback(feedback_id):
+    """
+    Roda a IA de novo num feedback (cadeia de provedores do servidor).
+
+    Pensado para os "não analisados" (cota, timeout...), mas vale para
+    qualquer feedback: um resultado novo substitui sentimento, spam e
+    funcionalidades, inclusive correções manuais anteriores. Síncrono: a
+    chamada espera a IA (até ``LLM_TIMEOUT`` por tentativa).
+
+    200 com o feedback atualizado; 503 se a IA não respondeu de novo
+    (``analysis_unavailable``, com o motivo em ``detail``) ou se não há
+    provedor configurado (``llm_not_configured``).
+    """
+    try:
+        uuid.UUID(str(feedback_id))
+    except (ValueError, AttributeError, TypeError):
+        return jsonify({'error': 'Field "id" must be a valid UUID'}), 400
+
+    feedback = FeedbackService.get_feedback_by_id(feedback_id)
+    if feedback is None:
+        return jsonify({'error': 'Feedback not found'}), 404
+
+    try:
+        failure = FeedbackService.reanalyze(feedback, feedback_analyzer)
+    except LLMNotConfiguredError:
+        return jsonify({
+            'error': 'Nenhum provedor de LLM configurado: defina uma chave no '
+                     'servidor ou cadastre uma em Provedores.',
+            'code': 'llm_not_configured',
+        }), 503
+
+    if failure:
+        logger.warning('Feedback id=%s continua sem análise (%s)', feedback_id, failure)
+        return jsonify({
+            'error': 'A IA não respondeu. O feedback continua como não analisado.',
+            'code': 'analysis_unavailable',
+            'detail': failure,
+            'feedback': feedback.to_dict(),
+        }), 503
+
+    logger.info('Feedback id=%s reanalisado: sentiment=%s is_spam=%s',
+                feedback_id, feedback.sentiment, feedback.is_spam)
+    return jsonify(feedback.to_dict()), 200
+
+
 @api.route('/feedbacks/<feedback_id>', methods=['GET'])
 @api_read_required
 def get_feedback(feedback_id):
@@ -329,8 +389,9 @@ def dashboard_stats():
     ou ``API_READ_TOKEN``), já que expõe o conteúdo dos feedbacks.
     """
     stats = Statistics.get_dashboard_statistics()
+    unanalyzed = FeedbackService.count_unanalyzed()
     if not stats.get('has_data'):
-        return jsonify({'has_data': False}), 200
+        return jsonify({'has_data': False, 'unanalyzed': unanalyzed}), 200
 
     recent = FeedbackService.get_recent_feedbacks()
     return jsonify({
@@ -340,4 +401,7 @@ def dashboard_stats():
         'sentiment_percentages': stats['sentiment_percentages'],
         'top_features': stats['top_features'],
         'recent_feedbacks': [item.to_dict() for item in recent],
+        # Feedbacks que a IA não conseguiu analisar (entram nos números acima
+        # como INCONCLUSIVO, que aí é só o valor padrão).
+        'unanalyzed': unanalyzed,
     }), 200
