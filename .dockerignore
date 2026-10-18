@@ -12,6 +12,7 @@ env/
 .pytest_cache/
 .ruff_cache/
 tests/
+evals/
 .github/
 *.md
 migrations/README
