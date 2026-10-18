@@ -123,15 +123,15 @@ onMounted(async () => {
 
     <template v-else-if="feedback">
       <header class="fl-detail__head">
-        <span :class="sentimentMeta(feedback.sentiment).chipClass">
+        <span v-if="feedback.analysis_status === 'unanalyzed'" class="fl-sentiment fl-sentiment--pending">
+          <i class="pi pi-clock" aria-hidden="true" /> Não analisado
+        </span>
+        <span v-else :class="sentimentMeta(feedback.sentiment).chipClass">
           <i :class="sentimentMeta(feedback.sentiment).icon" aria-hidden="true" />
           {{ sentimentMeta(feedback.sentiment).label }}
         </span>
         <span v-if="feedback.is_spam" class="fl-sentiment fl-sentiment--noise">
           <i class="pi pi-times" aria-hidden="true" /> Ruído (spam)
-        </span>
-        <span v-if="feedback.analysis_status === 'unanalyzed'" class="fl-sentiment fl-sentiment--pending">
-          <i class="pi pi-clock" aria-hidden="true" /> Não analisado
         </span>
         <time class="fl-detail__date">{{ formatDate(feedback.created_at) }}</time>
       </header>
