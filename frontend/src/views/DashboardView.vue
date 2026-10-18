@@ -16,6 +16,7 @@ const error = ref<string | null>(null)
 
 const stats = computed(() => store.data)
 const hasData = computed(() => stats.value?.has_data === true)
+const unanalyzed = computed(() => stats.value?.unanalyzed ?? 0)
 
 onMounted(async () => {
   try {
@@ -39,6 +40,21 @@ function truncate(text: string, max = 60): string {
       <h1>Visão geral</h1>
       <p class="fl-muted">Foco no que seus usuários pedem, com a IA que você escolher.</p>
     </header>
+
+    <Message
+      v-if="!store.loading && !error && unanalyzed > 0"
+      severity="warn"
+      :closable="false"
+      class="fl-unanalyzed"
+    >
+      <strong>{{ unanalyzed }}</strong>
+      {{ unanalyzed === 1 ? 'feedback não foi analisado' : 'feedbacks não foram analisados' }} pela
+      IA (cota excedida, tempo esgotado etc.).
+      {{ unanalyzed === 1 ? 'Ele aparece' : 'Eles aparecem' }} como “Inconclusivo” só por padrão.
+      <RouterLink :to="{ path: '/feedbacks', query: { analysis: 'unanalyzed' } }" class="fl-link">
+        Ver e reanalisar
+      </RouterLink>
+    </Message>
 
     <div v-if="store.loading" class="fl-loading">
       <ProgressSpinner style="width: 2.5rem; height: 2.5rem" />
@@ -134,6 +150,9 @@ function truncate(text: string, max = 60): string {
   display: flex;
   justify-content: center;
   padding: 3rem;
+}
+.fl-unanalyzed {
+  margin-bottom: 1rem;
 }
 .fl-cards {
   display: grid;

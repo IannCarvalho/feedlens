@@ -130,13 +130,19 @@ class FeedbackAnalysis(BaseModel):
         return list(unique.values())[:MAX_FEATURES]
 
 
-def _default_result() -> dict:
-    """Canonical safe result used whenever analysis cannot be trusted."""
+def _default_result(failure: str) -> dict:
+    """Canonical safe result used whenever analysis cannot be trusted.
+
+    ``failure`` diz por que a IA não analisou (kind da última tentativa:
+    ``rate_limit`` = cota/limite, ``timeout``, ``auth``..., ou
+    ``invalid_response``). É o que marca o feedback como não analisado.
+    """
     return {
         "sentiment": DEFAULT_SENTIMENT,
         "is_spam": False,
         "requested_features": [],
         "analyzed_by": None,
+        "failure": failure,
     }
 
 
@@ -160,7 +166,10 @@ class FeedbackAnalyzer:
 
         Returns:
             dict: sentiment, is_spam, requested_features and analyzed_by
-            ('provedor/modelo', or None when the safe default was used).
+            ('provedor/modelo', or None when the safe default was used), plus
+            ``failure``: None quando a IA analisou; senão o motivo da falha
+            (``rate_limit``, ``timeout``, ``invalid_response``...), caso em que
+            o resto é só o resultado seguro padrão, não uma opinião.
 
         Raises:
             LLMNotConfiguredError: no server key and no request credential.
@@ -182,22 +191,23 @@ class FeedbackAnalyzer:
             if credential is not None:
                 raise
             # Chaves do servidor falharam (timeout, cota, indisponibilidade):
-            # devolve o resultado seguro em vez de derrubar o request.
+            # devolve o resultado seguro em vez de derrubar o request, mas
+            # marcado com o motivo para o feedback ficar como "não analisado".
             logger.error(f"LLM call failed: {e}")
-            return _default_result()
+            return _default_result(e.attempts[-1].kind if e.attempts else "error")
 
         raw = self._extract_json(completion.content)
         if raw is None:
             logger.error("Could not locate JSON in LLM response")
-            return _default_result()
+            return _default_result("invalid_response")
 
         try:
             analysis = FeedbackAnalysis.model_validate(raw)
         except ValidationError as e:
             logger.error(f"LLM analysis failed schema validation: {e}")
-            return _default_result()
+            return _default_result("invalid_response")
 
-        return {**analysis.model_dump(), "analyzed_by": completion.model_ref}
+        return {**analysis.model_dump(), "analyzed_by": completion.model_ref, "failure": None}
 
     @staticmethod
     def _extract_json(content: str):

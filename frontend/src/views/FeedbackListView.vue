@@ -9,7 +9,13 @@ import Message from 'primevue/message'
 import { useFeedbacksStore } from '@/stores/feedbacks'
 import { HttpError } from '@/lib/http'
 import { formatDate, sentimentMeta } from '@/lib/sentiment'
-import type { Feedback, FeedbackSpamFilter, Sentiment } from '@/types/api'
+import { analysisErrorLabel } from '@/lib/analysis'
+import type {
+  Feedback,
+  FeedbackAnalysisFilter,
+  FeedbackSpamFilter,
+  Sentiment,
+} from '@/types/api'
 
 const store = useFeedbacksStore()
 const route = useRoute()
@@ -34,9 +40,14 @@ function spamFromUrl(): FeedbackSpamFilter {
     : 'exclude'
 }
 
-// Os filtros vivem na URL (?sentiment=&spam=), então links salvos e o reload os mantêm.
+function analysisFromUrl(): FeedbackAnalysisFilter {
+  return route.query.analysis === 'unanalyzed' ? 'unanalyzed' : 'any'
+}
+
+// Os filtros vivem na URL (?sentiment=&spam=&analysis=), então links salvos e o reload os mantêm.
 const sentimentFilter = ref<Sentiment | null>(sentimentFromUrl())
 const spamFilter = ref<FeedbackSpamFilter>(spamFromUrl())
+const analysisFilter = ref<FeedbackAnalysisFilter>(analysisFromUrl())
 const sentimentOptions = [
   { label: 'Todos os sentimentos', value: null },
   { label: 'Positivo', value: 'POSITIVO' as const },
@@ -48,6 +59,10 @@ const spamOptions = [
   { label: 'Com spam', value: 'include' as const },
   { label: 'Só spam', value: 'only' as const },
 ]
+const analysisOptions = [
+  { label: 'Qualquer análise', value: 'any' as const },
+  { label: 'Não analisados', value: 'unanalyzed' as const },
+]
 
 async function load(page = 1) {
   error.value = null
@@ -57,6 +72,7 @@ async function load(page = 1) {
       perPage,
       sentiment: sentimentFilter.value,
       spam: spamFilter.value,
+      analysis: analysisFilter.value,
     })
   } catch (e) {
     error.value =
@@ -74,6 +90,7 @@ function onFilterChange() {
   const query: Record<string, string> = {}
   if (sentimentFilter.value) query.sentiment = sentimentFilter.value
   if (spamFilter.value !== 'exclude') query.spam = spamFilter.value
+  if (analysisFilter.value !== 'any') query.analysis = analysisFilter.value
   router.replace({ query })
   load(1)
 }
@@ -95,6 +112,15 @@ onMounted(() => load(1))
       <h1>Feedbacks</h1>
       <div class="fl-filters">
         <Select
+          v-model="analysisFilter"
+          :options="analysisOptions"
+          option-label="label"
+          option-value="value"
+          class="fl-filter"
+          aria-label="Filtrar por análise da IA"
+          @change="onFilterChange"
+        />
+        <Select
           v-model="spamFilter"
           :options="spamOptions"
           option-label="label"
@@ -115,6 +141,12 @@ onMounted(() => load(1))
         />
       </div>
     </header>
+
+    <Message v-if="analysisFilter === 'unanalyzed'" severity="info" :closable="false" class="fl-note">
+      Estes feedbacks chegaram, mas a IA não conseguiu analisá-los (cota excedida, tempo esgotado
+      etc.). O sentimento “Inconclusivo” deles é só o valor padrão. Abra um e use “Reanalisar com
+      a IA”, ou rode <code>flask reanalyze-pending</code> no servidor para todos de uma vez.
+    </Message>
 
     <Message v-if="spamFilter !== 'exclude'" severity="info" :closable="false" class="fl-note">
       <template v-if="spamFilter === 'only'">
@@ -143,7 +175,10 @@ onMounted(() => load(1))
       @row-select="openDetail($event.data)"
     >
       <template #empty>
-        <span v-if="spamFilter === 'only'">
+        <span v-if="analysisFilter === 'unanalyzed'">
+          Nenhum feedback aguardando análise. Tudo o que chegou foi analisado pela IA.
+        </span>
+        <span v-else-if="spamFilter === 'only'">
           Nenhum feedback marcado como spam. Quando a IA classificar um texto como ruído, ele
           aparece aqui para você revisar.
         </span>
@@ -165,6 +200,13 @@ onMounted(() => load(1))
           </span>
           <span v-if="data.is_spam" class="fl-sentiment fl-sentiment--noise fl-spam-chip">
             <i class="pi pi-ban" aria-hidden="true" /> Spam
+          </span>
+          <span
+            v-if="data.analysis_status === 'unanalyzed'"
+            class="fl-sentiment fl-sentiment--pending fl-spam-chip"
+            :title="`A IA não analisou: ${analysisErrorLabel(data.analysis_error)}`"
+          >
+            <i class="pi pi-clock" aria-hidden="true" /> Não analisado
           </span>
         </template>
       </Column>

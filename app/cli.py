@@ -6,6 +6,80 @@ from app import db
 from app.llm.vault import VaultDecryptError, VaultDisabledError
 
 
+def register_analysis_cli(app: Flask) -> None:
+    """Registra ``flask reanalyze-pending``."""
+
+    @app.cli.command('reanalyze-pending')
+    @click.option('--limit', type=click.IntRange(min=1), default=None,
+                  help='Processa no máximo N feedbacks (do mais antigo ao mais novo).')
+    @click.option('--id', 'ids', multiple=True,
+                  help='Reanalisa este feedback (UUID), mesmo que já analisado. '
+                       'Pode repetir.')
+    @click.option('--stop-after', type=click.IntRange(min=1), default=3, show_default=True,
+                  help='Para depois de N falhas seguidas (ex.: cota esgotada), '
+                       'em vez de gastar chamadas à toa.')
+    def reanalyze_pending_command(limit, ids, stop_after):
+        """Roda a IA de novo nos feedbacks que ela não conseguiu analisar.
+
+        São os marcados como "não analisados" (cota excedida, timeout, resposta
+        inválida). Use depois que a cota voltar ou o provedor se recuperar.
+        Termina com código 1 se algum continuou sem análise.
+        """
+        import uuid
+
+        from app.llm import LLMNotConfiguredError
+        from app.services.feedback_analyzer import FeedbackAnalyzer
+        from app.services.feedback_service import FeedbackService
+
+        if ids:
+            feedbacks = []
+            for raw in ids:
+                try:
+                    uuid.UUID(raw)
+                except ValueError:
+                    raise click.ClickException(
+                        f'Id inválido (precisa ser UUID): {raw}') from None
+                feedback = FeedbackService.get_feedback_by_id(raw)
+                if feedback is None:
+                    raise click.ClickException(f'Feedback não encontrado: {raw}')
+                feedbacks.append(feedback)
+        else:
+            feedbacks = FeedbackService.pending_analysis(limit)
+
+        if not feedbacks:
+            click.echo('Nenhum feedback aguardando análise.')
+            return
+
+        analyzer = FeedbackAnalyzer()
+        done = failed = streak = 0
+        for feedback in feedbacks:
+            try:
+                failure = FeedbackService.reanalyze(feedback, analyzer)
+            except LLMNotConfiguredError:
+                raise click.ClickException(
+                    'Nenhum provedor de LLM configurado: defina uma chave no '
+                    'servidor ou cadastre uma em Provedores.') from None
+            if failure is None:
+                done += 1
+                streak = 0
+                click.echo(f'ok     {feedback.id}  {feedback.sentiment}')
+                continue
+            failed += 1
+            streak += 1
+            click.echo(f'falhou {feedback.id}  ({failure})', err=True)
+            if streak >= stop_after:
+                click.echo(
+                    f'Parei depois de {streak} falhas seguidas ({failure}). '
+                    'Tente de novo quando o provedor se recuperar.', err=True)
+                break
+
+        pending = FeedbackService.count_unanalyzed()
+        click.echo(f'{done} reanalisado(s), {failed} falha(s); '
+                   f'{pending} ainda aguardam análise.')
+        if failed:
+            raise click.exceptions.Exit(1)
+
+
 def register_vault_cli(app: Flask) -> None:
     """Registra ``flask rotate-llm-keys``."""
 

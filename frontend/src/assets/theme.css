@@ -112,6 +112,11 @@ kbd,
   background: color-mix(in srgb, var(--fl-noise) 18%, transparent);
   color: var(--fl-noise);
 }
+.fl-sentiment--pending {
+  /* "Não analisado": âmbar de fundo e o texto do tema, para manter o contraste */
+  background: color-mix(in srgb, var(--fl-amber) 28%, transparent);
+  color: var(--fl-text);
+}
 
 @media (prefers-reduced-motion: reduce) {
   *,

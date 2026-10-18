@@ -10,6 +10,7 @@ import Select from 'primevue/select'
 import { useFeedbacksStore } from '@/stores/feedbacks'
 import { HttpError } from '@/lib/http'
 import { formatDate, sentimentMeta } from '@/lib/sentiment'
+import { analysisErrorLabel } from '@/lib/analysis'
 import type { Feedback, Sentiment } from '@/types/api'
 
 const store = useFeedbacksStore()
@@ -20,6 +21,7 @@ const error = ref<string | null>(null)
 const reviewing = ref(false)
 const reviewError = ref<string | null>(null)
 const reviewNotice = ref<string | null>(null)
+const reanalyzing = ref(false)
 
 const sentimentOptions: { label: string; value: Sentiment }[] = [
   { label: 'Positivo', value: 'POSITIVO' },
@@ -29,6 +31,29 @@ const sentimentOptions: { label: string; value: Sentiment }[] = [
 
 const REVIEW_ERROR =
   'Não foi possível salvar a correção. Tente de novo; se persistir, verifique se o servidor está no ar.'
+
+/** Roda a IA de novo (a chamada espera a resposta do provedor, até alguns segundos). */
+async function reanalyze() {
+  const current = feedback.value
+  if (!current || reanalyzing.value || reviewing.value) return
+  reanalyzing.value = true
+  reviewError.value = null
+  reviewNotice.value = null
+  try {
+    feedback.value = await store.reanalyze(current.id)
+    reviewNotice.value = 'Reanalisado pela IA. Sentimento, spam e funcionalidades foram atualizados.'
+  } catch (e) {
+    if (e instanceof HttpError && e.code === 'analysis_unavailable') {
+      const kind = e.body?.detail
+      current.analysis_error = kind ?? current.analysis_error
+      reviewError.value = `A IA ainda não respondeu: ${analysisErrorLabel(kind)}. O feedback continua como não analisado; tente de novo mais tarde.`
+    } else {
+      reviewError.value = e instanceof HttpError ? e.message : REVIEW_ERROR
+    }
+  } finally {
+    reanalyzing.value = false
+  }
+}
 
 /** Revisão humana: confirma ou desfaz o spam marcado pela IA. */
 async function review(isSpam: boolean) {
@@ -105,8 +130,33 @@ onMounted(async () => {
         <span v-if="feedback.is_spam" class="fl-sentiment fl-sentiment--noise">
           <i class="pi pi-times" aria-hidden="true" /> Ruído (spam)
         </span>
+        <span v-if="feedback.analysis_status === 'unanalyzed'" class="fl-sentiment fl-sentiment--pending">
+          <i class="pi pi-clock" aria-hidden="true" /> Não analisado
+        </span>
         <time class="fl-detail__date">{{ formatDate(feedback.created_at) }}</time>
       </header>
+
+      <Message
+        v-if="feedback.analysis_status === 'unanalyzed'"
+        severity="warn"
+        :closable="false"
+        class="fl-detail__card"
+      >
+        <div class="fl-pending">
+          <span>
+            A IA não analisou este feedback ({{ analysisErrorLabel(feedback.analysis_error) }}). O
+            sentimento “Inconclusivo” é só o valor padrão, não uma opinião.
+          </span>
+          <Button
+            label="Reanalisar com a IA"
+            icon="pi pi-refresh"
+            size="small"
+            :loading="reanalyzing"
+            :disabled="reviewing"
+            @click="reanalyze"
+          />
+        </div>
+      </Message>
 
       <Message v-if="feedback.is_spam" severity="info" :closable="false" class="fl-detail__card">
         A IA marcou este texto como spam, por isso ele fica fora das listas normais e dos gráficos.
@@ -216,6 +266,13 @@ onMounted(async () => {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  gap: 0.75rem 1.5rem;
+}
+.fl-pending {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
   gap: 0.75rem 1.5rem;
 }
 .fl-review__field {

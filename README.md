@@ -312,7 +312,7 @@ docker compose exec web flask db upgrade
 }
 ```
 
-`analyzed_by` indica o `provedor/modelo` que fez a análise; `null` significa que as chaves do servidor falharam (timeout, cota, indisponibilidade) e o feedback foi gravado com o resultado seguro padrão (`INCONCLUSIVO`, sem spam, sem features).
+`analyzed_by` indica o `provedor/modelo` que fez a análise. `null` significa que a IA **não analisou** (as chaves do servidor falharam por timeout, cota excedida, indisponibilidade ou resposta inválida): o feedback é gravado mesmo assim, com o resultado seguro padrão (`INCONCLUSIVO`, sem spam, sem features), mas **marcado como não analisado**. A resposta `201` traz `analysis_status` (`analyzed` ou `unanalyzed`) e `analysis_error` (o motivo: `rate_limit` = cota, `timeout`, `connection`, `auth`, `not_found`, `empty`, `invalid_response`...). Quem enviou não é afetado; o painel mostra esses feedbacks com o selo “Não analisado” e permite reanalisá-los (veja *Reanalisar*, abaixo).
 
 **BYOK por requisição (opcional):** o cliente pode usar a própria chave enviando os headers abaixo. Nesse caso **só** essa chave é usada (nunca as do servidor), ela não é gravada nem logada, e uma falha volta como erro em vez de virar `INCONCLUSIVO`, sem gravar nada, para que o mesmo `id` possa ser reenviado.
 
@@ -349,6 +349,9 @@ curl -X POST https://seu-host/api/feedbacks \
 - `per_page` — itens por página (padrão `20`, máximo `100`)
 - `sentiment` — filtro opcional (`POSITIVO`, `NEGATIVO` ou `INCONCLUSIVO`)
 - `spam` — `exclude` (padrão, sem spam), `include` (tudo) ou `only` (só os marcados como spam). Outro valor responde `400`.
+- `analysis` — `any` (padrão) ou `unanalyzed` (só os que a IA não conseguiu analisar). Outro valor responde `400`.
+
+**Campos de cada item:** além de `id`, `feedback`, `sentiment`, `is_spam`, `created_at` e `requested_features`, vêm `analysis_status`, `analysis_error` e `analyzed_by` (veja *Analisar Feedback*).
 
 **Resposta de Sucesso (200 OK):**
 ```json
@@ -389,6 +392,22 @@ curl -X POST https://seu-host/api/feedbacks \
 **Descrição:** Revisão humana do que a IA decidiu. Corpo: `{"is_spam": true|false}` e/ou `{"sentiment": "POSITIVO"|"NEGATIVO"|"INCONCLUSIVO"}`, pelo menos um dos dois. Só esses campos mudam (texto e funcionalidades continuam os da análise; outras chaves são ignoradas). Devolve o feedback atualizado, e repetir o mesmo valor é seguro. Listas, gráficos e o resumo semanal passam a refletir a correção.
 
 **Autenticação:** só a sessão do painel com o header `X-CSRF-Token`. O `API_READ_TOKEN` **não** vale aqui. Sem `DASHBOARD_PASSWORD` responde `403` (`auth_not_configured`); sem sessão, `401`; com CSRF inválido, `403`. Também responde `400` para id ou corpo inválidos (sem campo, valor fora de `POSITIVO`/`NEGATIVO`/`INCONCLUSIVO`, `is_spam` que não é booleano) e `404` quando o feedback não existe.
+
+### Reanalisar um Feedback
+
+**Endpoint:** `POST /api/feedbacks/<id>/reanalyze`
+
+**Descrição:** Roda a IA de novo no texto (cadeia de provedores do servidor) e grava o resultado. Pensado para os **não analisados** (cota, timeout...), mas vale para qualquer feedback: um resultado novo substitui sentimento, spam e funcionalidades, inclusive correções manuais anteriores. É síncrono (espera a IA).
+
+- `200` com o feedback atualizado (`analysis_status: "analyzed"`).
+- `503` + `code: "analysis_unavailable"` (com o motivo em `detail`) se a IA não respondeu de novo: o feedback continua não analisado e o sentimento/spam atuais ficam como estavam.
+- `503` + `code: "llm_not_configured"` se não há provedor configurado.
+
+**Autenticação:** a mesma do `PATCH` (sessão do painel + `X-CSRF-Token`; `403` sem `DASHBOARD_PASSWORD`).
+
+**Em lote:** no servidor, `flask reanalyze-pending` reprocessa todos os não analisados, do mais antigo ao mais novo. Opções: `--limit N`, `--id <uuid>` (repetível; reanalisa esse feedback mesmo que já analisado) e `--stop-after N` (padrão 3: para depois de N falhas seguidas, por exemplo cota esgotada, em vez de gastar chamadas). Termina com código 1 se algum continuou sem análise.
+
+**Migração:** o estado da análise vem da migration `0005` (`flask db upgrade`). Os feedbacks que já existiam ficam como `analyzed`, porque não há como saber depois quais foram o resultado padrão; reanalise os suspeitos com `flask reanalyze-pending --id <uuid>` ou pelo botão do painel.
 
 ### Health Check
 
@@ -445,7 +464,7 @@ python -m evals.classification_eval --prompt-file outro.txt   # testa um prompt 
 
 Os casos (`evals/cases.py`) cobrem elogios e críticas curtos, ironia, perguntas, pedidos de funcionalidade, feedback sobre atendimento (que não pode virar spam) e spam de verdade (propaganda, letra de música, texto sem sentido, injeção de prompt). O comando **chama a LLM de verdade** e gasta cota: cerca de uma chamada por caso e repetição. Falhas do provedor (cota, timeout) são contadas à parte, e não como erro de classificação. A suíte `pytest` testa o contrato do prompt e o harness sem chamar a LLM.
 
-> Atenção: se a cota do provedor acabar ou a chamada expirar, o analisador grava o resultado seguro padrão (`INCONCLUSIVO`, sem spam, sem funcionalidades, `analyzed_by` vazio). Esse feedback não foi analisado; um `INCONCLUSIVO` sem `analyzed_by` indica falha do provedor, não opinião neutra.
+> Atenção: se a cota do provedor acabar ou a chamada expirar, o analisador grava o resultado seguro padrão (`INCONCLUSIVO`, sem spam, sem funcionalidades), mas o feedback fica marcado como **não analisado** (`analysis_status: "unanalyzed"`, com o motivo em `analysis_error`). No painel ele aparece com o selo “Não analisado”, e dá para reprocessá-lo (botão “Reanalisar com a IA” ou `flask reanalyze-pending`).
 
 ## Interface Web
 
