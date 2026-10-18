@@ -1,7 +1,7 @@
 from typing import Dict, List, Optional, TypedDict
 from sqlalchemy import func
 from app import db
-from app.models.feedback import Feedback, RequestedFeature
+from app.models.feedback import ANALYSIS_ANALYZED, Feedback, RequestedFeature
 
 
 class FeatureStats(TypedDict):
@@ -17,18 +17,29 @@ class SentimentStats(TypedDict):
 
 
 class Statistics:
-    """Service class to handle feedback statistics calculations"""
+    """Service class to handle feedback statistics calculations
+
+    ``analyzed_only``: deixa de fora os feedbacks que a IA não conseguiu
+    analisar (``analysis_status = 'unanalyzed'``). O sentimento deles é só o
+    valor padrão, não uma opinião, então não devem entrar em números e
+    gráficos. O painel usa ``analyzed_only=True``; o padrão (False) preserva o
+    comportamento de quem chama sem o argumento.
+    """
 
     @staticmethod
-    def get_total_feedbacks(exclude_spam: bool = True) -> int:
+    def get_total_feedbacks(exclude_spam: bool = True, analyzed_only: bool = False) -> int:
         """Get total number of feedbacks, optionally excluding spam"""
         query = Feedback.query
         if exclude_spam:
             query = query.filter_by(is_spam=False)
+        if analyzed_only:
+            query = query.filter(Feedback.analysis_status == ANALYSIS_ANALYZED)
         return query.count()
 
     @staticmethod
-    def _count_by_sentiment(exclude_spam: bool = True) -> Dict[Optional[str], int]:
+    def _count_by_sentiment(
+        exclude_spam: bool = True, analyzed_only: bool = False
+    ) -> Dict[Optional[str], int]:
         """One GROUP BY with every sentiment bucket, including NULL."""
         query = db.session.query(
             Feedback.sentiment,
@@ -37,13 +48,17 @@ class Statistics:
 
         if exclude_spam:
             query = query.filter(Feedback.is_spam == False)
+        if analyzed_only:
+            query = query.filter(Feedback.analysis_status == ANALYSIS_ANALYZED)
 
         return dict(query.group_by(Feedback.sentiment).all())
 
     @staticmethod
-    def get_sentiment_counts(exclude_spam: bool = True) -> SentimentStats:
+    def get_sentiment_counts(
+        exclude_spam: bool = True, analyzed_only: bool = False
+    ) -> SentimentStats:
         """Get counts of feedbacks by sentiment"""
-        counts = Statistics._count_by_sentiment(exclude_spam)
+        counts = Statistics._count_by_sentiment(exclude_spam, analyzed_only)
         return {
             'POSITIVO': counts.get('POSITIVO', 0),
             'NEGATIVO': counts.get('NEGATIVO', 0),
@@ -70,6 +85,7 @@ class Statistics:
         limit: int = 10,
         exclude_spam: bool = True,
         total_feedbacks: Optional[int] = None,
+        analyzed_only: bool = False,
     ) -> List[FeatureStats]:
         """Get most requested features
 
@@ -78,7 +94,7 @@ class Statistics:
                 caller already counted, to skip a second COUNT query.
         """
         if total_feedbacks is None:
-            total_feedbacks = Statistics.get_total_feedbacks(exclude_spam)
+            total_feedbacks = Statistics.get_total_feedbacks(exclude_spam, analyzed_only)
 
         query = db.session.query(
             RequestedFeature.code,
@@ -87,6 +103,8 @@ class Statistics:
 
         if exclude_spam:
             query = query.filter(Feedback.is_spam == False)
+        if analyzed_only:
+            query = query.filter(Feedback.analysis_status == ANALYSIS_ANALYZED)
 
         features = query.group_by(
             RequestedFeature.code
@@ -108,10 +126,12 @@ class Statistics:
         """Get all statistics needed for the dashboard
 
         Two queries: one GROUP BY by sentiment (whose sum is the total, the
-        same rows COUNT(*) would see) and the feature ranking.
+        same rows COUNT(*) would see) and the feature ranking. Fora spam e fora
+        os feedbacks que a IA não analisou (sentimento só padrão): eles
+        continuam na listagem e no aviso de pendentes, mas não nos números.
         """
         # Sempre excluir spam
-        by_sentiment = cls._count_by_sentiment(exclude_spam=True)
+        by_sentiment = cls._count_by_sentiment(exclude_spam=True, analyzed_only=True)
         total_feedbacks = sum(by_sentiment.values())
 
         if total_feedbacks == 0:
@@ -129,5 +149,6 @@ class Statistics:
             'sentiment_counts': sentiment_counts,
             'sentiment_percentages': cls.get_sentiment_percentages(total_feedbacks, sentiment_counts),
             'top_features': cls.get_top_features(
-                exclude_spam=True, total_feedbacks=total_feedbacks)
+                exclude_spam=True, total_feedbacks=total_feedbacks,
+                analyzed_only=True)
         }

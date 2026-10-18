@@ -472,7 +472,7 @@ O painel é uma SPA Vue 3 servida pelo Flask na raiz. A navegação acontece no 
 
 ### Rotas do painel
 
-- **Visão geral (`/`):** contagem e indicadores, distribuição de sentimentos, funcionalidades mais solicitadas e feedbacks recentes.
+- **Visão geral (`/`):** contagem e indicadores, distribuição de sentimentos, funcionalidades mais solicitadas e feedbacks recentes. Os números e gráficos ignoram spam e os feedbacks **não analisados** (a IA não respondeu; o sentimento deles é só o padrão). Esses ficam na lista de recentes com o selo “Não analisado”, e um aviso no topo diz quantos são e leva à lista filtrada para reanalisá-los.
 - **Feedbacks (`/feedbacks`):** tabela paginada com filtros por sentimento e por spam (`Sem spam`, `Com spam`, `Só spam`) e navegação para o detalhe.
 - **Detalhe (`/feedbacks/<id>`):** texto original, sentimento, status de spam e funcionalidades identificadas. Com login ligado, o seletor “Sentimento” corrige o que a IA atribuiu e os botões “Marcar como spam” e “Não é spam” corrigem a classificação de spam.
 - **Provedores (`/providers`):** cadeia de provedores, cadastro e teste de chaves no cofre BYOK, habilitação, remoção e reordenação.

@@ -50,7 +50,8 @@ function truncate(text: string, max = 60): string {
       <strong>{{ unanalyzed }}</strong>
       {{ unanalyzed === 1 ? 'feedback não foi analisado' : 'feedbacks não foram analisados' }} pela
       IA (cota excedida, tempo esgotado etc.).
-      {{ unanalyzed === 1 ? 'Ele aparece' : 'Eles aparecem' }} como “Inconclusivo” só por padrão.
+      {{ unanalyzed === 1 ? 'Ele fica' : 'Eles ficam' }} fora dos números e gráficos desta página e
+      {{ unanalyzed === 1 ? 'continua' : 'continuam' }} na lista de feedbacks.
       <RouterLink :to="{ path: '/feedbacks', query: { analysis: 'unanalyzed' } }" class="fl-link">
         Ver e reanalisar
       </RouterLink>
@@ -63,8 +64,14 @@ function truncate(text: string, max = 60): string {
     <Message v-else-if="error" severity="warn" :closable="false">{{ error }}</Message>
 
     <Message v-else-if="!hasData" severity="info" :closable="false">
-      Ainda não há feedbacks para analisar. Assim que o primeiro chegar pela API
-      (<code>POST /api/feedbacks</code>), os números e gráficos aparecem aqui.
+      <template v-if="unanalyzed > 0">
+        Ainda não há feedbacks analisados para mostrar. Assim que a IA analisar os que já chegaram,
+        os números e gráficos aparecem aqui.
+      </template>
+      <template v-else>
+        Ainda não há feedbacks para analisar. Assim que o primeiro chegar pela API
+        (<code>POST /api/feedbacks</code>), os números e gráficos aparecem aqui.
+      </template>
     </Message>
 
     <template v-else-if="stats">
@@ -123,7 +130,14 @@ function truncate(text: string, max = 60): string {
         <template #content>
           <ul class="fl-recent__list">
             <li v-for="f in stats.recent_feedbacks" :key="f.id" class="fl-recent__row">
-              <span :class="sentimentMeta(f.sentiment).chipClass">
+              <span
+                v-if="f.analysis_status === 'unanalyzed'"
+                class="fl-sentiment fl-sentiment--pending"
+                title="A IA ainda não analisou este feedback"
+              >
+                <i class="pi pi-clock" aria-hidden="true" /> Não analisado
+              </span>
+              <span v-else :class="sentimentMeta(f.sentiment).chipClass">
                 <i :class="sentimentMeta(f.sentiment).icon" aria-hidden="true" />
                 {{ sentimentMeta(f.sentiment).label }}
               </span>
