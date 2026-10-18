@@ -1,15 +1,21 @@
 import uuid
 import logging
+from functools import wraps
 from flask import Blueprint, request, jsonify, current_app
 from typing import Dict, Any
 from sqlalchemy.exc import IntegrityError
 from app import db
-from app.auth import api_read_required
+from app.auth import api_read_required, auth_enabled, is_authenticated
+from app.csrf import CSRF_HEADER, csrf_is_valid
 from app.extensions import limiter
 from app.ingest_auth import ingest_key_required
 from app.models.feedback import FEATURE_CODE_MAX_LENGTH, Feedback, RequestedFeature
 from app.services.feedback_analyzer import FeedbackAnalyzer
-from app.services.feedback_service import FeedbackService
+from app.services.feedback_service import (
+    SPAM_EXCLUDE,
+    SPAM_MODES,
+    FeedbackService,
+)
 from app.services.statistics_service import Statistics
 from app.llm import (
     ByokHeaderError,
@@ -171,12 +177,14 @@ def analyze_feedback():
 @api_read_required
 def list_feedbacks():
     """
-    List analyzed feedbacks (spam excluded), newest first.
+    List analyzed feedbacks, newest first. Spam is hidden unless asked for.
 
     Query params:
         page: page number (default 1)
         per_page: items per page (default 20, capped at 100)
         sentiment: optional filter (POSITIVO/NEGATIVO/INCONCLUSIVO)
+        spam: exclude (default, no spam) | include (everything) | only (spam
+            only, to review what the AI flagged)
     """
     try:
         page = int(request.args.get('page', 1))
@@ -187,12 +195,18 @@ def list_feedbacks():
     if page < 1 or per_page < 1:
         return jsonify({'error': 'page and per_page must be positive'}), 400
 
+    spam = request.args.get('spam', SPAM_EXCLUDE)
+    if spam not in SPAM_MODES:
+        return jsonify({
+            'error': f'spam must be one of: {", ".join(SPAM_MODES)}',
+        }), 400
+
     # Cap per_page to keep a single response bounded.
     per_page = min(per_page, 100)
 
     sentiment = request.args.get('sentiment')
     result = FeedbackService.get_filtered_feedbacks(
-        sentiment=sentiment, page=page, per_page=per_page)
+        sentiment=sentiment, page=page, per_page=per_page, spam=spam)
     pagination = result['pagination']
 
     return jsonify({
@@ -206,7 +220,69 @@ def list_feedbacks():
             'has_prev': pagination.has_prev,
         },
         'sentiment': sentiment,
+        'spam': spam,
     }), 200
+
+
+def panel_write_required(view):
+    """Sessão do painel + CSRF para alterar um feedback, com respostas JSON.
+
+    Diferente da leitura, não aceita ``API_READ_TOKEN``: corrigir a análise é
+    uma ação de quem opera o painel. Sem ``DASHBOARD_PASSWORD`` o painel é
+    aberto, e deixar qualquer um reescrever classificações não é aceitável.
+    """
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not auth_enabled():
+            return jsonify({
+                'error': 'Defina DASHBOARD_PASSWORD para corrigir a '
+                         'classificação de um feedback.',
+                'code': 'auth_not_configured',
+            }), 403
+        if not is_authenticated():
+            return jsonify({
+                'error': 'Faça login no painel.',
+                'code': 'unauthenticated',
+            }), 401
+        if not csrf_is_valid():
+            return jsonify({
+                'error': f'Header {CSRF_HEADER} ausente ou inválido.',
+                'code': 'csrf',
+            }), 403
+        return view(*args, **kwargs)
+    return wrapped
+
+
+@api.route('/feedbacks/<feedback_id>', methods=['PATCH'])
+@panel_write_required
+def review_feedback(feedback_id):
+    """
+    Revisão humana da classificação de spam: ``{"is_spam": true|false}``.
+
+    Só ``is_spam`` pode mudar (sentimento e funcionalidades continuam os da
+    análise). Idempotente: repetir o mesmo valor devolve 200 sem alterar nada.
+    """
+    try:
+        uuid.UUID(str(feedback_id))
+    except (ValueError, AttributeError, TypeError):
+        return jsonify({'error': 'Field "id" must be a valid UUID'}), 400
+
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or not isinstance(data.get('is_spam'), bool):
+        return jsonify({
+            'error': 'Body must be a JSON object with a boolean "is_spam"',
+        }), 400
+
+    feedback = FeedbackService.get_feedback_by_id(feedback_id)
+    if feedback is None:
+        return jsonify({'error': 'Feedback not found'}), 404
+
+    if feedback.is_spam != data['is_spam']:
+        FeedbackService.set_spam(feedback, data['is_spam'])
+        logger.info('Feedback id=%s reclassificado: is_spam=%s',
+                    feedback_id, data['is_spam'])
+
+    return jsonify(feedback.to_dict()), 200
 
 
 @api.route('/feedbacks/<feedback_id>', methods=['GET'])
