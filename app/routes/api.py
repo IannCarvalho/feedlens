@@ -387,6 +387,10 @@ def dashboard_stats():
     Espelha o que ``get_dashboard_statistics`` já calcula (duas queries) e
     anexa os recentes. Mesma proteção dos GET de feedbacks (sessão do painel
     ou ``API_READ_TOKEN``), já que expõe o conteúdo dos feedbacks.
+
+    Os números e gráficos (total, sentimentos, funcionalidades) ignoram spam e
+    os feedbacks que a IA não analisou; os ``recent_feedbacks`` mantêm estes
+    últimos, com ``analysis_status``, e ``unanalyzed`` diz quantos são.
     """
     stats = Statistics.get_dashboard_statistics()
     unanalyzed = FeedbackService.count_unanalyzed()
@@ -401,7 +405,7 @@ def dashboard_stats():
         'sentiment_percentages': stats['sentiment_percentages'],
         'top_features': stats['top_features'],
         'recent_feedbacks': [item.to_dict() for item in recent],
-        # Feedbacks que a IA não conseguiu analisar (entram nos números acima
-        # como INCONCLUSIVO, que aí é só o valor padrão).
+        # Feedbacks que a IA não conseguiu analisar: ficam FORA dos números
+        # acima (o sentimento deles é só o padrão) e aparecem em ``recent``.
         'unanalyzed': unanalyzed,
     }), 200
