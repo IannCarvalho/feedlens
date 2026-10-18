@@ -15,6 +15,7 @@ tests/
 .github/
 *.md
 migrations/README
+feedback-form/
 # Front: o estágio Node instala as próprias dependências (as do host podem ser
 # binários de outro SO) e gera o build; nada disso vem do contexto.
 node_modules/
