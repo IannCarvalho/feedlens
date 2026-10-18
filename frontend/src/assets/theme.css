@@ -113,9 +113,14 @@ kbd,
   color: var(--fl-noise);
 }
 .fl-sentiment--pending {
-  /* "Não analisado": âmbar de fundo e o texto do tema, para manter o contraste */
-  background: color-mix(in srgb, var(--fl-amber) 28%, transparent);
+  /* "Não analisado" não é um sentimento, é um estado: contorno tracejado em âmbar,
+     fundo quase transparente e o texto do tema (contraste), sem competir com os
+     chips cheios de sentimento. */
+  padding: calc(0.1rem - 1px) calc(0.6rem - 1px);
+  border: 1px dashed color-mix(in srgb, var(--fl-amber) 75%, transparent);
+  background: color-mix(in srgb, var(--fl-amber) 10%, transparent);
   color: var(--fl-text);
+  white-space: nowrap;
 }
 
 @media (prefers-reduced-motion: reduce) {

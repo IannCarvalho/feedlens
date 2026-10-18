@@ -194,19 +194,21 @@ onMounted(() => load(1))
 
       <Column header="Sentimento" style="width: 17rem">
         <template #body="{ data }">
-          <span :class="sentimentMeta(data.sentiment).chipClass">
+          <!-- Sem análise da IA o sentimento é só o padrão: mostra o estado no lugar dele,
+               e não os dois juntos ("Inconclusivo" + "Não analisado" se contradizem). -->
+          <span
+            v-if="data.analysis_status === 'unanalyzed'"
+            class="fl-sentiment fl-sentiment--pending"
+            :title="`A IA não analisou: ${analysisErrorLabel(data.analysis_error)}`"
+          >
+            <i class="pi pi-clock" aria-hidden="true" /> Não analisado
+          </span>
+          <span v-else :class="sentimentMeta(data.sentiment).chipClass">
             <i :class="sentimentMeta(data.sentiment).icon" aria-hidden="true" />
             {{ sentimentMeta(data.sentiment).label }}
           </span>
           <span v-if="data.is_spam" class="fl-sentiment fl-sentiment--noise fl-spam-chip">
             <i class="pi pi-ban" aria-hidden="true" /> Spam
-          </span>
-          <span
-            v-if="data.analysis_status === 'unanalyzed'"
-            class="fl-sentiment fl-sentiment--pending fl-spam-chip"
-            :title="`A IA não analisou: ${analysisErrorLabel(data.analysis_error)}`"
-          >
-            <i class="pi pi-clock" aria-hidden="true" /> Não analisado
           </span>
         </template>
       </Column>
