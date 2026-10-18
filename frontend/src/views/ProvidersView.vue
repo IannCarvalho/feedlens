@@ -36,6 +36,12 @@ const providerOptions = computed(() =>
   store.catalog.map((c) => ({ label: c.label, value: c.id })),
 )
 
+/* Dica do campo "Modelo": o padrão do provedor escolhido (cada um tem o seu). */
+const modelPlaceholder = computed(() => {
+  const entry = store.catalog.find((c) => c.id === form.value.provider)
+  return `ex.: ${entry?.default_model ?? 'claude-haiku-4-5'}`
+})
+
 function openDialog() {
   form.value = { provider: 'anthropic', model: '', api_key: '' }
   formError.value = null
@@ -46,7 +52,7 @@ async function submit() {
   formError.value = null
   if (!form.value.api_key.trim()) {
     formError.value =
-      'Cole a chave de API do provedor selecionado para salvar. Você a gera no painel do próprio provedor (ex.: platform.openai.com, console.anthropic.com).'
+      'Cole a chave de API do provedor selecionado para salvar. Você a gera no painel do próprio provedor (ex.: platform.openai.com, console.anthropic.com, console.groq.com, openrouter.ai).'
     return
   }
   saving.value = true
@@ -295,7 +301,7 @@ onMounted(async () => {
         </label>
         <label class="fl-form__label">
           Modelo <span class="fl-muted">(opcional — usa o padrão do provedor)</span>
-          <InputText v-model="form.model" placeholder="ex.: claude-haiku-4-5" />
+          <InputText v-model="form.model" :placeholder="modelPlaceholder" />
         </label>
         <label class="fl-form__label">
           Chave de API

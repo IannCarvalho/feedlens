@@ -1,6 +1,6 @@
 """Camada de LLM do FeedLens: BYOK multi-provedor sobre o LiteLLM.
 
-- ``providers``: catálogo/allowlist (OpenAI, Anthropic, Google Gemini).
+- ``providers``: catálogo/allowlist (OpenAI, Anthropic, Google Gemini, Groq, OpenRouter).
 - ``credentials``: de onde vem a chave (BYOK por requisição > chaves do servidor).
 - ``client``: chamada com fallback entre provedores e erros sem a chave.
 

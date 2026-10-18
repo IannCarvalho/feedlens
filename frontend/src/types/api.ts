@@ -5,7 +5,7 @@
  */
 
 export type Sentiment = 'POSITIVO' | 'NEGATIVO' | 'INCONCLUSIVO'
-export type ProviderId = 'openai' | 'anthropic' | 'gemini'
+export type ProviderId = 'openai' | 'anthropic' | 'gemini' | 'groq' | 'openrouter'
 
 export interface RequestedFeature {
   code: string

@@ -156,7 +156,8 @@ def test_request_credential_failure_is_raised_not_masked():
 
 
 def test_no_provider_configured_raises(app):
-    app.config.update(OPENAI_API_KEY=None, ANTHROPIC_API_KEY=None, GEMINI_API_KEY=None)
+    app.config.update(OPENAI_API_KEY=None, ANTHROPIC_API_KEY=None, GEMINI_API_KEY=None,
+                      GROQ_API_KEY=None, OPENROUTER_API_KEY=None)
     with pytest.raises(LLMNotConfiguredError):
         FeedbackAnalyzer().analyze_feedback("texto")
 

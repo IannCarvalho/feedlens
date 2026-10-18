@@ -104,7 +104,7 @@ def credential_from_headers(headers: Mapping[str, str],
         raise ByokHeaderError(f'{HEADER_API_KEY} em formato inválido')
     try:
         provider = get_provider(provider_id)
-        model = validate_model_name(model) if model else provider.default_model
+        model = validate_model_name(model, provider) if model else provider.default_model
     except ValueError as e:
         raise ByokHeaderError(str(e)) from None
     return Credential(provider, model, api_key, source='request')

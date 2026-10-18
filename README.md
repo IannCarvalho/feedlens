@@ -10,7 +10,7 @@ Uma lente sobre o feedback dos seus usuários: análise automática de feedback 
 
 O FeedLens recebe feedbacks de usuários, classifica-os por sentimento, detecta spam e identifica as funcionalidades mais pedidas — e disponibiliza tudo em um dashboard web e em um resumo semanal por e-mail. Ele resolve o gargalo de analisar manualmente feedbacks que chegam de muitos canais (atendimento, comunidades, redes sociais).
 
-A análise é **BYOK (bring your own key) e multi-provedor**: funciona com OpenAI, Anthropic ou Google Gemini, usando as chaves do operador (com fallback entre provedores) ou a chave que o próprio cliente envia na requisição.
+A análise é **BYOK (bring your own key) e multi-provedor**: funciona com OpenAI, Anthropic, Google Gemini, Groq ou OpenRouter, usando as chaves do operador (com fallback entre provedores) ou a chave que o próprio cliente envia na requisição.
 
 A aplicação é responsável por:
 
@@ -89,7 +89,7 @@ npm run typecheck; npm run lint; npm test; npm run build
   - SQLite (alternativa para desenvolvimento)
 
 - **Inteligência Artificial:**
-  - [LiteLLM](https://docs.litellm.ai/): interface única para OpenAI, Anthropic e Google Gemini (BYOK, fallback entre provedores)
+  - [LiteLLM](https://docs.litellm.ai/): interface única para OpenAI, Anthropic, Google Gemini, Groq e OpenRouter (BYOK, fallback entre provedores)
   - Pydantic (validação da saída do modelo) e [nh3](https://nh3.readthedocs.io/) (sanitização do HTML gerado para o e-mail)
 
 - **Frontend:**
@@ -112,7 +112,7 @@ npm run typecheck; npm run lint; npm test; npm run build
 - Python 3.10 ou superior
 - Node.js 24.15 ou superior, para compilar o painel (não é necessário com Docker)
 - PostgreSQL ou outro banco de dados SQL (ou SQLite para desenvolvimento)
-- Chave de API de pelo menos um provedor de LLM (OpenAI, Anthropic ou Google Gemini), no servidor ou enviada por requisição
+- Chave de API de pelo menos um provedor de LLM (OpenAI, Anthropic, Google Gemini, Groq ou OpenRouter), no servidor ou enviada por requisição
 
 ### Instalação
 
@@ -164,7 +164,7 @@ FEEDLENS_ENCRYPTION_KEY=sua_chave_fernet
 
    Opcionais: chaves de LLM no servidor (ou cadastre-as depois na tela de provedores) e o e-mail do resumo semanal:
 ```
-# LLM: preencha só os provedores que usar (OPENAI_/ANTHROPIC_/GEMINI_API_KEY)
+# LLM: preencha só os provedores que usar (OPENAI_/ANTHROPIC_/GEMINI_/GROQ_/OPENROUTER_API_KEY)
 ANTHROPIC_API_KEY=sua_chave_anthropic
 # Ordem principal -> reservas, no formato provedor/modelo
 LLM_MODELS=anthropic/claude-haiku-4-5
@@ -318,9 +318,9 @@ docker compose exec web flask db upgrade
 
 | Header | Obrigatório | Exemplo |
 |---|---|---|
-| `X-LLM-Provider` | sim | `openai`, `anthropic` ou `gemini` |
+| `X-LLM-Provider` | sim | `openai`, `anthropic`, `gemini`, `groq` ou `openrouter` |
 | `X-LLM-Api-Key` | sim | a chave do provedor |
-| `X-LLM-Model` | não | `claude-haiku-4-5` (padrão: o modelo padrão do provedor) |
+| `X-LLM-Model` | não | `claude-haiku-4-5` (padrão: o modelo padrão do provedor); no Groq e no OpenRouter aceita `fabricante/modelo`, ex.: `google/gemma-4-31b-it:free` |
 
 ```bash
 curl -X POST https://seu-host/api/feedbacks \
@@ -520,7 +520,7 @@ A camada `app/llm/` fala com os modelos via [LiteLLM](https://docs.litellm.ai/) 
 
 1. **BYOK por requisição** (headers `X-LLM-*`): usa só a chave do cliente.
 2. **Chaves salvas no cofre** (opcional, veja [Chaves de Provedor](#chaves-de-provedor-cofre)): cifradas no banco, na ordem de `priority`, editáveis sem redeploy.
-3. **Chaves do servidor** (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`): `LLM_MODELS` define a cadeia `provedor/modelo`, principal primeiro e reservas depois (ex.: `anthropic/claude-haiku-4-5,openai/gpt-4o-mini`). Sem `LLM_MODELS`, todo provedor com chave entra, no modelo padrão, na ordem OpenAI → Anthropic → Gemini.
+3. **Chaves do servidor** (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`): `LLM_MODELS` define a cadeia `provedor/modelo`, principal primeiro e reservas depois (ex.: `anthropic/claude-haiku-4-5,openai/gpt-4o-mini`). Sem `LLM_MODELS`, todo provedor com chave entra, no modelo padrão, na ordem OpenAI → Anthropic → Gemini → Groq → OpenRouter.
 
 Se o principal falha (timeout, cota, chave revogada, indisponibilidade), a análise segue para o próximo da cadeia. Trocar de provedor é mudar a ordem em `LLM_MODELS` (ou reordenar as chaves salvas); nenhuma chave é obrigatória para o app subir.
 
@@ -529,10 +529,19 @@ Se o principal falha (timeout, cota, chave revogada, indisponibilidade), a anál
 | OpenAI | `OPENAI_API_KEY` | `gpt-4o-mini` (ou `OPENAI_MODEL`, mantido por compatibilidade) |
 | Anthropic | `ANTHROPIC_API_KEY` | `claude-haiku-4-5` |
 | Google Gemini | `GEMINI_API_KEY` | `gemini-2.5-flash-lite` |
+| Groq | `GROQ_API_KEY` | `llama-3.3-70b-versatile` |
+| OpenRouter | `OPENROUTER_API_KEY` | `openrouter/free` (roteador de modelos gratuitos) |
+
+**Groq e OpenRouter (camada gratuita).** Ambos têm planos gratuitos, com limites que mudam e que você deve conferir no console de cada um (a cota por minuto e por dia, o que vale para o seu modelo e a política de dados do plano grátis). Servem bem como **reserva** do provedor principal:
+
+- Crie a chave em `console.groq.com` ou `openrouter.ai` e informe em `GROQ_API_KEY` / `OPENROUTER_API_KEY`, ou cadastre na tela *Provedores*.
+- O nome do modelo vai depois do prefixo do provedor. Nesses dois ele pode ter a barra do fabricante: `groq/openai/gpt-oss-20b`, `openrouter/google/gemma-4-31b-it:free`. O padrão do OpenRouter, `openrouter/free`, deixa o OpenRouter escolher um modelo gratuito que esteja no ar (a lista de ids `:free` muda com frequência); para fixar um, use o id completo.
+- Exemplo de cadeia com reserva gratuita: `LLM_MODELS=gemini/gemini-2.5-flash-lite,groq/llama-3.3-70b-versatile,openrouter/openrouter/free`.
+- Modelo pequeno ou roteado pode classificar pior (spam e funcionalidades, sobretudo em português). Meça com `python -m evals.classification_eval` antes de torná-lo o principal.
 
 Cuidados de segurança:
 
-- **Allowlist de provedores:** só os três acima. Prefixos como `bedrock/` ou `ollama/` usariam credenciais ou hosts internos do servidor e são recusados.
+- **Allowlist de provedores:** só os cinco acima. Prefixos como `bedrock/` ou `ollama/` usariam credenciais ou hosts internos do servidor e são recusados. A barra no nome do modelo só é aceita no Groq e no OpenRouter (uma única, `fabricante/modelo`); nos outros provedores continua proibida, para o provedor sair sempre do prefixo.
 - **A chave não vaza:** não é gravada (no BYOK por requisição), não aparece em `repr` e é removida das mensagens de erro e dos logs; as chaves salvas ficam cifradas (Fernet) e a API nunca as devolve; o log do próprio LiteLLM fica em `WARNING` para não registrar o texto dos feedbacks.
 - **Prompt injection:** as instruções vão na mensagem de sistema e o feedback vai delimitado, como dado. Códigos de feature são normalizados (`EDICAO_DE_PERFIL`, até 50 caracteres, no máximo 10 por feedback), e o HTML gerado para o e-mail passa por sanitização: só tags de formatação, sem links, imagens ou atributos.
 - **Custo e latência:** cada chamada loga provedor, latência, tokens e custo estimado. O LiteLLM é importado sob demanda (e aquecido em segundo plano no `wsgi.py`), então boot, CLI e testes não pagam seu import.

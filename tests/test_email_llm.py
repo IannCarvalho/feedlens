@@ -14,7 +14,8 @@ STATS = {
     "top_features": [{"code": "EDITAR_PERFIL", "count": 3,
                       "reasons": ["trocar a foto", "trocar a foto", "mudar o e-mail"]}],
 }
-NO_KEYS = {"OPENAI_API_KEY": None, "ANTHROPIC_API_KEY": None, "GEMINI_API_KEY": None, "LLM_MODELS": []}
+NO_KEYS = {"OPENAI_API_KEY": None, "ANTHROPIC_API_KEY": None, "GEMINI_API_KEY": None,
+           "GROQ_API_KEY": None, "OPENROUTER_API_KEY": None, "LLM_MODELS": []}
 
 
 @pytest.fixture()
