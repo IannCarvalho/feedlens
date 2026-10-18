@@ -382,13 +382,13 @@ curl -X POST https://seu-host/api/feedbacks \
 
 **Descrição:** Retorna um feedback específico pelo seu UUID. Mesma autenticação da listagem. Responde `400` para um id malformado e `404` quando não existe. Funciona também para feedbacks marcados como spam.
 
-### Corrigir a Classificação de Spam
+### Corrigir a Análise de um Feedback
 
 **Endpoint:** `PATCH /api/feedbacks/<id>`
 
-**Descrição:** Revisão humana do que a IA marcou como spam. Corpo: `{"is_spam": true}` ou `{"is_spam": false}` (só booleano; só esse campo muda, sentimento e funcionalidades continuam os da análise). Devolve o feedback atualizado, e repetir o mesmo valor é seguro. Listas, gráficos e o resumo semanal passam a refletir a correção.
+**Descrição:** Revisão humana do que a IA decidiu. Corpo: `{"is_spam": true|false}` e/ou `{"sentiment": "POSITIVO"|"NEGATIVO"|"INCONCLUSIVO"}`, pelo menos um dos dois. Só esses campos mudam (texto e funcionalidades continuam os da análise; outras chaves são ignoradas). Devolve o feedback atualizado, e repetir o mesmo valor é seguro. Listas, gráficos e o resumo semanal passam a refletir a correção.
 
-**Autenticação:** só a sessão do painel com o header `X-CSRF-Token`. O `API_READ_TOKEN` **não** vale aqui. Sem `DASHBOARD_PASSWORD` responde `403` (`auth_not_configured`); sem sessão, `401`; com CSRF inválido, `403`. Também responde `400` para id ou corpo inválidos e `404` quando o feedback não existe.
+**Autenticação:** só a sessão do painel com o header `X-CSRF-Token`. O `API_READ_TOKEN` **não** vale aqui. Sem `DASHBOARD_PASSWORD` responde `403` (`auth_not_configured`); sem sessão, `401`; com CSRF inválido, `403`. Também responde `400` para id ou corpo inválidos (sem campo, valor fora de `POSITIVO`/`NEGATIVO`/`INCONCLUSIVO`, `is_spam` que não é booleano) e `404` quando o feedback não existe.
 
 ### Health Check
 
@@ -441,7 +441,7 @@ O painel é uma SPA Vue 3 servida pelo Flask na raiz. A navegação acontece no 
 
 - **Visão geral (`/`):** contagem e indicadores, distribuição de sentimentos, funcionalidades mais solicitadas e feedbacks recentes.
 - **Feedbacks (`/feedbacks`):** tabela paginada com filtros por sentimento e por spam (`Sem spam`, `Com spam`, `Só spam`) e navegação para o detalhe.
-- **Detalhe (`/feedbacks/<id>`):** texto original, sentimento, status de spam e funcionalidades identificadas. Com login ligado, os botões “Marcar como spam” e “Não é spam” corrigem a classificação da IA.
+- **Detalhe (`/feedbacks/<id>`):** texto original, sentimento, status de spam e funcionalidades identificadas. Com login ligado, o seletor “Sentimento” corrige o que a IA atribuiu e os botões “Marcar como spam” e “Não é spam” corrigem a classificação de spam.
 - **Provedores (`/providers`):** cadeia de provedores, cadastro e teste de chaves no cofre BYOK, habilitação, remoção e reordenação.
 - **Login (`/login`):** tela pública do próprio SPA; a senha é validada pelo Flask e a sessão usa cookie assinado.
 

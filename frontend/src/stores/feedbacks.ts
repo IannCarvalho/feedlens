@@ -40,10 +40,21 @@ export const useFeedbacksStore = defineStore('feedbacks', () => {
     return http.get<Feedback>(`/api/feedbacks/${id}`)
   }
 
-  /** Revisão humana: corrige a classificação de spam feita pela IA. */
-  async function setSpam(id: string, isSpam: boolean): Promise<Feedback> {
-    return http.patch<Feedback>(`/api/feedbacks/${id}`, { is_spam: isSpam }, true)
+  /** Revisão humana: corrige a análise da IA (spam e/ou sentimento). */
+  async function review(
+    id: string,
+    changes: { is_spam?: boolean; sentiment?: Sentiment },
+  ): Promise<Feedback> {
+    return http.patch<Feedback>(`/api/feedbacks/${id}`, changes, true)
   }
 
-  return { items, pagination, loading, list, getById, setSpam }
+  async function setSpam(id: string, isSpam: boolean): Promise<Feedback> {
+    return review(id, { is_spam: isSpam })
+  }
+
+  async function setSentiment(id: string, sentiment: Sentiment): Promise<Feedback> {
+    return review(id, { sentiment })
+  }
+
+  return { items, pagination, loading, list, getById, review, setSpam, setSentiment }
 })

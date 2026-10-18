@@ -12,6 +12,7 @@ from app.ingest_auth import ingest_key_required
 from app.models.feedback import FEATURE_CODE_MAX_LENGTH, Feedback, RequestedFeature
 from app.services.feedback_analyzer import FeedbackAnalyzer
 from app.services.feedback_service import (
+    SENTIMENTS,
     SPAM_EXCLUDE,
     SPAM_MODES,
     FeedbackService,
@@ -257,10 +258,12 @@ def panel_write_required(view):
 @panel_write_required
 def review_feedback(feedback_id):
     """
-    Revisão humana da classificação de spam: ``{"is_spam": true|false}``.
+    Revisão humana da análise da IA: ``{"is_spam": bool}`` e/ou
+    ``{"sentiment": "POSITIVO"|"NEGATIVO"|"INCONCLUSIVO"}``.
 
-    Só ``is_spam`` pode mudar (sentimento e funcionalidades continuam os da
-    análise). Idempotente: repetir o mesmo valor devolve 200 sem alterar nada.
+    Só esses dois campos podem mudar (as funcionalidades continuam as da
+    análise; outras chaves do corpo são ignoradas). Pelo menos um é obrigatório.
+    Idempotente: repetir o mesmo valor devolve 200 sem alterar nada.
     """
     try:
         uuid.UUID(str(feedback_id))
@@ -268,19 +271,30 @@ def review_feedback(feedback_id):
         return jsonify({'error': 'Field "id" must be a valid UUID'}), 400
 
     data = request.get_json(silent=True)
-    if not isinstance(data, dict) or not isinstance(data.get('is_spam'), bool):
+    if not isinstance(data, dict):
+        return jsonify({'error': 'Body must be a JSON object'}), 400
+
+    is_spam = data.get('is_spam')
+    sentiment = data.get('sentiment')
+    if is_spam is None and sentiment is None:
         return jsonify({
-            'error': 'Body must be a JSON object with a boolean "is_spam"',
+            'error': 'Send "is_spam" (boolean) and/or "sentiment" '
+                     f'({", ".join(SENTIMENTS)})',
+        }), 400
+    if is_spam is not None and not isinstance(is_spam, bool):
+        return jsonify({'error': 'Field "is_spam" must be a boolean'}), 400
+    if sentiment is not None and sentiment not in SENTIMENTS:
+        return jsonify({
+            'error': f'Field "sentiment" must be one of: {", ".join(SENTIMENTS)}',
         }), 400
 
     feedback = FeedbackService.get_feedback_by_id(feedback_id)
     if feedback is None:
         return jsonify({'error': 'Feedback not found'}), 404
 
-    if feedback.is_spam != data['is_spam']:
-        FeedbackService.set_spam(feedback, data['is_spam'])
-        logger.info('Feedback id=%s reclassificado: is_spam=%s',
-                    feedback_id, data['is_spam'])
+    if FeedbackService.apply_review(feedback, is_spam=is_spam, sentiment=sentiment):
+        logger.info('Feedback id=%s revisado: is_spam=%s sentiment=%s',
+                    feedback_id, feedback.is_spam, feedback.sentiment)
 
     return jsonify(feedback.to_dict()), 200
 

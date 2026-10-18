@@ -10,6 +10,9 @@ SPAM_INCLUDE = 'include'
 SPAM_ONLY = 'only'
 SPAM_MODES = (SPAM_EXCLUDE, SPAM_INCLUDE, SPAM_ONLY)
 
+# Valores válidos de sentimento (os mesmos que a análise da IA devolve).
+SENTIMENTS = ('POSITIVO', 'NEGATIVO', 'INCONCLUSIVO')
+
 
 class FeedbackService:
     """Service class to handle feedback operations"""
@@ -64,13 +67,25 @@ class FeedbackService:
         }
 
     @staticmethod
-    def set_spam(feedback: Feedback, is_spam: bool) -> Feedback:
-        """Corrige a classificação de spam feita pela IA (revisão humana).
+    def apply_review(
+        feedback: Feedback,
+        is_spam: Optional[bool] = None,
+        sentiment: Optional[str] = None,
+    ) -> bool:
+        """Correção humana da análise da IA: spam e/ou sentimento.
 
-        Só mexe em ``is_spam``: sentimento e funcionalidades continuam os da
-        análise. Estatísticas, listas e o resumo semanal passam a refletir a
-        correção na próxima leitura, porque todos filtram por esse campo.
+        Só mexe no que foi informado (``None`` = não alterar); as funcionalidades
+        continuam as da análise. Estatísticas, listas e o resumo semanal passam a
+        refletir a correção na próxima leitura, porque todos leem esses campos.
+        Devolve ``True`` se algo mudou (repetir o mesmo valor não grava).
         """
-        feedback.is_spam = is_spam
-        db.session.commit()
-        return feedback
+        changed = False
+        if is_spam is not None and feedback.is_spam != is_spam:
+            feedback.is_spam = is_spam
+            changed = True
+        if sentiment is not None and feedback.sentiment != sentiment:
+            feedback.sentiment = sentiment
+            changed = True
+        if changed:
+            db.session.commit()
+        return changed

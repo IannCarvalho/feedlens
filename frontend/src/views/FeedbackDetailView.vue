@@ -5,11 +5,12 @@ import Card from 'primevue/card'
 import Message from 'primevue/message'
 import ProgressSpinner from 'primevue/progressspinner'
 import Button from 'primevue/button'
+import Select from 'primevue/select'
 
 import { useFeedbacksStore } from '@/stores/feedbacks'
 import { HttpError } from '@/lib/http'
 import { formatDate, sentimentMeta } from '@/lib/sentiment'
-import type { Feedback } from '@/types/api'
+import type { Feedback, Sentiment } from '@/types/api'
 
 const store = useFeedbacksStore()
 const route = useRoute()
@@ -19,6 +20,15 @@ const error = ref<string | null>(null)
 const reviewing = ref(false)
 const reviewError = ref<string | null>(null)
 const reviewNotice = ref<string | null>(null)
+
+const sentimentOptions: { label: string; value: Sentiment }[] = [
+  { label: 'Positivo', value: 'POSITIVO' },
+  { label: 'Negativo', value: 'NEGATIVO' },
+  { label: 'Inconclusivo', value: 'INCONCLUSIVO' },
+]
+
+const REVIEW_ERROR =
+  'Não foi possível salvar a correção. Tente de novo; se persistir, verifique se o servidor está no ar.'
 
 /** Revisão humana: confirma ou desfaz o spam marcado pela IA. */
 async function review(isSpam: boolean) {
@@ -32,10 +42,24 @@ async function review(isSpam: boolean) {
       ? 'Marcado como spam. Ele sai das listas normais e dos gráficos.'
       : 'Restaurado. Ele volta às listas e aos gráficos.'
   } catch (e) {
-    reviewError.value =
-      e instanceof HttpError
-        ? e.message
-        : 'Não foi possível salvar a correção. Tente de novo; se persistir, verifique se o servidor está no ar.'
+    reviewError.value = e instanceof HttpError ? e.message : REVIEW_ERROR
+  } finally {
+    reviewing.value = false
+  }
+}
+
+/** Revisão humana: troca o sentimento que a IA atribuiu. */
+async function changeSentiment(sentiment: Sentiment | null) {
+  const current = feedback.value
+  if (!current || !sentiment || sentiment === current.sentiment || reviewing.value) return
+  reviewing.value = true
+  reviewError.value = null
+  reviewNotice.value = null
+  try {
+    feedback.value = await store.setSentiment(current.id, sentiment)
+    reviewNotice.value = `Sentimento alterado para ${sentimentMeta(sentiment).label}. Os gráficos já refletem a correção.`
+  } catch (e) {
+    reviewError.value = e instanceof HttpError ? e.message : REVIEW_ERROR
   } finally {
     reviewing.value = false
   }
@@ -102,24 +126,40 @@ onMounted(async () => {
           <code class="fl-detail__id">{{ feedback.id }}</code>
         </template>
         <template #footer>
-          <Button
-            v-if="feedback.is_spam"
-            label="Não é spam"
-            icon="pi pi-check"
-            severity="secondary"
-            size="small"
-            :loading="reviewing"
-            @click="review(false)"
-          />
-          <Button
-            v-else
-            label="Marcar como spam"
-            icon="pi pi-ban"
-            severity="secondary"
-            size="small"
-            :loading="reviewing"
-            @click="review(true)"
-          />
+          <div class="fl-review">
+            <div class="fl-review__field">
+              <span class="fl-review__label">Sentimento</span>
+              <Select
+                :model-value="feedback.sentiment"
+                :options="sentimentOptions"
+                option-label="label"
+                option-value="value"
+                placeholder="Escolha"
+                :disabled="reviewing"
+                aria-label="Alterar o sentimento"
+                class="fl-review__select"
+                @update:model-value="changeSentiment"
+              />
+            </div>
+            <Button
+              v-if="feedback.is_spam"
+              label="Não é spam"
+              icon="pi pi-check"
+              severity="secondary"
+              size="small"
+              :loading="reviewing"
+              @click="review(false)"
+            />
+            <Button
+              v-else
+              label="Marcar como spam"
+              icon="pi pi-ban"
+              severity="secondary"
+              size="small"
+              :loading="reviewing"
+              @click="review(true)"
+            />
+          </div>
         </template>
       </Card>
 
@@ -171,6 +211,24 @@ onMounted(async () => {
 .fl-detail__id {
   font-size: 0.78rem;
   color: var(--fl-text-muted);
+}
+.fl-review {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1.5rem;
+}
+.fl-review__field {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.fl-review__label {
+  font-size: 0.85rem;
+  color: var(--fl-text-muted);
+}
+.fl-review__select {
+  min-width: 11rem;
 }
 .fl-features {
   list-style: none;
