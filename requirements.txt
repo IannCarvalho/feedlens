@@ -5,6 +5,9 @@ SQLAlchemy==2.0.25
 psycopg2-binary==2.9.9
 python-dotenv==1.2.4
 litellm==1.105.1
+# O LiteLLM usa o tenacity nos retries (num_retries) mas não o declara como
+# dependência: sem ele, toda falha vira "tenacity import failed" e o retry some.
+tenacity==9.2.1
 nh3==0.3.7
 cryptography==46.0.7
 pydantic>=2.0,<3.0
