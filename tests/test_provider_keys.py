@@ -516,3 +516,54 @@ def test_create_rejects_malformed_models_per_provider(admin, provider, model):
     assert response.status_code == 400
     assert response.get_json()["code"] == "invalid_provider"
     assert db.session.query(ProviderCredential).count() == 0
+
+
+# --------------------------------------------- editar modelo e chave (tela)
+
+def test_patch_model_only_keeps_the_key_and_drops_the_old_verification(admin):
+    with patch(PROBE, return_value=_ok()):
+        first = _create(admin).get_json()
+    assert first["last_verified_at"]
+
+    with patch(PROBE) as probe:
+        response = admin.patch(f"{BASE}/{first['id']}", json={"model": "gpt-4o"},
+                               headers=admin.csrf)
+    assert response.status_code == 200
+    item = response.get_json()
+    assert item["model"] == "gpt-4o" and item["key_hint"] == first["key_hint"]
+    assert item["last_verified_at"] is None          # a verificacao era do modelo antigo
+    probe.assert_not_called()                        # a tela testa em seguida (POST .../test)
+
+    chain = store.stored_chain()
+    assert [c.model_ref for c in chain] == ["openai/gpt-4o"]
+    assert chain[0].api_key == OPENAI_KEY            # a mesma chave, sem recadastrar
+
+
+def test_patch_key_and_model_together_verify_the_new_model(admin):
+    with patch(PROBE, return_value=_ok()):
+        first = _create(admin, provider="groq", api_key=GROQ_KEY).get_json()
+    new_key = "gsk_NOVA9999ZZZZ0000q1w2"
+    with patch(PROBE, return_value=_ok()) as probe:
+        response = admin.patch(f"{BASE}/{first['id']}",
+                               json={"model": "openai/gpt-oss-20b", "api_key": new_key},
+                               headers=admin.csrf)
+    assert response.status_code == 200
+    assert probe.call_args.args[1][0].model_ref == "groq/openai/gpt-oss-20b"
+    item = response.get_json()
+    assert (item["model"], item["key_hint"]) == ("openai/gpt-oss-20b", "...q1w2")
+    assert item["last_verified_at"]
+    assert new_key not in response.get_data(as_text=True)
+
+
+def test_patch_key_and_model_refused_changes_nothing(admin):
+    with patch(PROBE, return_value=_ok()):
+        first = _create(admin, provider="groq", api_key=GROQ_KEY,
+                        model="llama-3.3-70b-versatile").get_json()
+    with patch(PROBE, side_effect=_fail("auth")):
+        response = admin.patch(f"{BASE}/{first['id']}",
+                               json={"model": "openai/gpt-oss-20b", "api_key": "gsk_RECUSADA123456"},
+                               headers=admin.csrf)
+    assert response.status_code == 422
+    row = db.session.get(ProviderCredential, __import__("uuid").UUID(first["id"]))
+    assert row.model == "llama-3.3-70b-versatile"    # o modelo antigo; nada foi salvo
+    assert store.get_vault().decrypt(row.encrypted_key) == GROQ_KEY

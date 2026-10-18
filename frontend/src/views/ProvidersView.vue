@@ -74,6 +74,66 @@ async function submit() {
   }
 }
 
+/* --- Editar uma chave salva (modelo e/ou chave) --- */
+const editing = ref<ProviderCredential | null>(null)
+const editForm = ref({ model: '', api_key: '' })
+const editSaving = ref(false)
+const editError = ref<string | null>(null)
+
+const editVisible = computed({
+  get: () => editing.value !== null,
+  set: (open: boolean) => {
+    if (!open) editing.value = null
+  },
+})
+
+const editEntry = computed(() => store.catalog.find((c) => c.id === editing.value?.provider))
+
+function openEdit(row: ProviderCredential) {
+  editing.value = row
+  editForm.value = { model: row.model, api_key: '' }
+  editError.value = null
+}
+
+async function submitEdit() {
+  const row = editing.value
+  if (!row) return
+  editError.value = null
+  // Modelo em branco = o padrão do provedor, como no cadastro.
+  const model = editForm.value.model.trim() || editEntry.value?.default_model || row.model
+  const apiKey = editForm.value.api_key.trim()
+
+  const changes: { model?: string; api_key?: string } = {}
+  if (model !== row.model) changes.model = model
+  if (apiKey) changes.api_key = apiKey
+  if (!changes.model && !changes.api_key) {
+    editing.value = null
+    return
+  }
+
+  editSaving.value = true
+  try {
+    await store.update(row.id, changes)
+  } catch (e) {
+    editError.value =
+      e instanceof HttpError
+        ? e.message
+        : 'Não foi possível salvar a alteração. Confira a conexão e tente de novo.'
+    return
+  } finally {
+    editSaving.value = false
+  }
+  editing.value = null
+  if (changes.api_key) {
+    // O servidor já testou a chave nova antes de salvar.
+    notice.value = 'Chave atualizada e verificada.'
+    return
+  }
+  // Só o modelo mudou: a verificação anterior não vale mais, então testa agora.
+  const updated = store.credentials.find((c) => c.id === row.id)
+  if (updated) await testKey(updated)
+}
+
 /* --- Ações por linha --- */
 const busyId = ref<string | null>(null)
 
@@ -239,7 +299,12 @@ onMounted(async () => {
                   :value="c.enabled ? 'ativa' : 'desativada'"
                   :severity="c.enabled ? 'success' : 'secondary'"
                 />
-                <Tag v-if="c.verified" value="verificada" severity="info" icon="pi pi-check" />
+                <Tag
+                  v-if="c.last_verified_at"
+                  value="verificada"
+                  severity="info"
+                  icon="pi pi-check"
+                />
                 <Tag
                   v-else-if="c.last_error_kind"
                   :value="c.last_error_kind"
@@ -255,6 +320,15 @@ onMounted(async () => {
                   aria-label="Testar chave"
                   :loading="busyId === c.id"
                   @click="testKey(c)"
+                />
+                <Button
+                  icon="pi pi-pencil"
+                  text
+                  rounded
+                  size="small"
+                  aria-label="Editar chave"
+                  :disabled="busyId === c.id"
+                  @click="openEdit(c)"
                 />
                 <Button
                   :icon="c.enabled ? 'pi pi-pause' : 'pi pi-play'"
@@ -318,6 +392,39 @@ onMounted(async () => {
       <template #footer>
         <Button label="Cancelar" text @click="showDialog = false" />
         <Button label="Salvar e testar" icon="pi pi-check" :loading="saving" @click="submit" />
+      </template>
+    </Dialog>
+
+    <Dialog
+      v-model:visible="editVisible"
+      modal
+      :header="`Editar chave${editEntry ? ' de ' + editEntry.label : ''}`"
+      :style="{ width: '28rem' }"
+    >
+      <div v-if="editing" class="fl-form">
+        <label class="fl-form__label">
+          Modelo <span class="fl-muted">(em branco = o padrão do provedor)</span>
+          <InputText v-model="editForm.model" :placeholder="`ex.: ${editEntry?.default_model ?? ''}`" />
+        </label>
+        <label class="fl-form__label">
+          Nova chave de API <span class="fl-muted">(opcional)</span>
+          <InputText
+            v-model="editForm.api_key"
+            type="password"
+            autocomplete="off"
+            :placeholder="`em branco mantém a atual (${editing.key_hint})`"
+          />
+        </label>
+        <Message v-if="editError" severity="error" :closable="false">{{ editError }}</Message>
+        <p class="fl-muted fl-form__note">
+          Trocar a chave testa a nova com uma chamada mínima antes de salvar. Trocar só o
+          modelo testa a chave atual com o modelo novo logo depois de salvar. A chave
+          salva nunca é exibida: para mantê-la, deixe o campo em branco.
+        </p>
+      </div>
+      <template #footer>
+        <Button label="Cancelar" text @click="editing = null" />
+        <Button label="Salvar" icon="pi pi-check" :loading="editSaving" @click="submitEdit" />
       </template>
     </Dialog>
   </section>
