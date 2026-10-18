@@ -67,7 +67,6 @@ export interface ProviderCredential {
   priority: number
   enabled: boolean
   key_hint: string
-  verified: boolean
   last_verified_at: string | null
   last_error_kind: string | null
 }
