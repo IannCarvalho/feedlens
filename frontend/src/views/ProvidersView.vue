@@ -107,7 +107,9 @@ async function testKey(row: ProviderCredential) {
           ? 'o provedor está limitando as chamadas — espere um pouco e teste de novo'
           : result.kind === 'timeout'
             ? 'a chamada expirou — verifique a conexão e tente de novo'
-            : `falhou (${result.kind ?? 'erro'}) — tente de novo em instantes`
+            : result.kind === 'not_found'
+              ? `o modelo “${row.model}” não existe para essa conta — remova a chave e cadastre de novo informando outro modelo`
+              : `falhou (${result.kind ?? 'erro'}) — tente de novo em instantes`
     error.value = `A chave de ${row.provider} não passou no teste: ${hint}.`
   })
 }
