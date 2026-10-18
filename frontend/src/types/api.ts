@@ -34,7 +34,11 @@ export interface FeedbackListResponse {
   items: Feedback[]
   pagination: Pagination
   sentiment: string | null
+  spam: FeedbackSpamFilter
 }
+
+/** O que a lista faz com o que a IA marcou como spam (`?spam=`). */
+export type FeedbackSpamFilter = 'exclude' | 'include' | 'only'
 
 /* ---- Cofre de provedores (BYOK do operador) ---- */
 

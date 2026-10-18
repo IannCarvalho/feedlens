@@ -16,6 +16,30 @@ const route = useRoute()
 const feedback = ref<Feedback | null>(null)
 const loading = ref(true)
 const error = ref<string | null>(null)
+const reviewing = ref(false)
+const reviewError = ref<string | null>(null)
+const reviewNotice = ref<string | null>(null)
+
+/** Revisão humana: confirma ou desfaz o spam marcado pela IA. */
+async function review(isSpam: boolean) {
+  if (!feedback.value || reviewing.value) return
+  reviewing.value = true
+  reviewError.value = null
+  reviewNotice.value = null
+  try {
+    feedback.value = await store.setSpam(feedback.value.id, isSpam)
+    reviewNotice.value = isSpam
+      ? 'Marcado como spam. Ele sai das listas normais e dos gráficos.'
+      : 'Restaurado. Ele volta às listas e aos gráficos.'
+  } catch (e) {
+    reviewError.value =
+      e instanceof HttpError
+        ? e.message
+        : 'Não foi possível salvar a correção. Tente de novo; se persistir, verifique se o servidor está no ar.'
+  } finally {
+    reviewing.value = false
+  }
+}
 
 onMounted(async () => {
   try {
@@ -60,11 +84,42 @@ onMounted(async () => {
         <time class="fl-detail__date">{{ formatDate(feedback.created_at) }}</time>
       </header>
 
+      <Message v-if="feedback.is_spam" severity="info" :closable="false" class="fl-detail__card">
+        A IA marcou este texto como spam, por isso ele fica fora das listas normais e dos gráficos.
+        Se foi engano, use “Não é spam”.
+      </Message>
+      <Message v-if="reviewNotice" severity="success" :closable="false" class="fl-detail__card">
+        {{ reviewNotice }}
+      </Message>
+      <Message v-if="reviewError" severity="warn" :closable="false" class="fl-detail__card">
+        {{ reviewError }}
+      </Message>
+
       <Card class="fl-detail__card">
         <template #title>Feedback</template>
         <template #content>
           <p class="fl-detail__text">{{ feedback.feedback }}</p>
           <code class="fl-detail__id">{{ feedback.id }}</code>
+        </template>
+        <template #footer>
+          <Button
+            v-if="feedback.is_spam"
+            label="Não é spam"
+            icon="pi pi-check"
+            severity="secondary"
+            size="small"
+            :loading="reviewing"
+            @click="review(false)"
+          />
+          <Button
+            v-else
+            label="Marcar como spam"
+            icon="pi pi-ban"
+            severity="secondary"
+            size="small"
+            :loading="reviewing"
+            @click="review(true)"
+          />
         </template>
       </Card>
 

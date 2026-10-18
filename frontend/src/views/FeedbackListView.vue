@@ -9,7 +9,7 @@ import Message from 'primevue/message'
 import { useFeedbacksStore } from '@/stores/feedbacks'
 import { HttpError } from '@/lib/http'
 import { formatDate, sentimentMeta } from '@/lib/sentiment'
-import type { Feedback, Sentiment } from '@/types/api'
+import type { Feedback, FeedbackSpamFilter, Sentiment } from '@/types/api'
 
 const store = useFeedbacksStore()
 const route = useRoute()
@@ -18,6 +18,7 @@ const error = ref<string | null>(null)
 const perPage = 20
 
 const SENTIMENTS: readonly Sentiment[] = ['POSITIVO', 'NEGATIVO', 'INCONCLUSIVO']
+const SPAM_FILTERS: readonly FeedbackSpamFilter[] = ['exclude', 'include', 'only']
 
 function sentimentFromUrl(): Sentiment | null {
   const value = route.query.sentiment
@@ -26,19 +27,37 @@ function sentimentFromUrl(): Sentiment | null {
     : null
 }
 
-// O filtro vive na URL (?sentiment=), então links salvos e o reload o mantêm.
+function spamFromUrl(): FeedbackSpamFilter {
+  const value = route.query.spam
+  return typeof value === 'string' && (SPAM_FILTERS as readonly string[]).includes(value)
+    ? (value as FeedbackSpamFilter)
+    : 'exclude'
+}
+
+// Os filtros vivem na URL (?sentiment=&spam=), então links salvos e o reload os mantêm.
 const sentimentFilter = ref<Sentiment | null>(sentimentFromUrl())
+const spamFilter = ref<FeedbackSpamFilter>(spamFromUrl())
 const sentimentOptions = [
   { label: 'Todos os sentimentos', value: null },
   { label: 'Positivo', value: 'POSITIVO' as const },
   { label: 'Negativo', value: 'NEGATIVO' as const },
   { label: 'Inconclusivo', value: 'INCONCLUSIVO' as const },
 ]
+const spamOptions = [
+  { label: 'Sem spam', value: 'exclude' as const },
+  { label: 'Com spam', value: 'include' as const },
+  { label: 'Só spam', value: 'only' as const },
+]
 
 async function load(page = 1) {
   error.value = null
   try {
-    await store.list({ page, perPage, sentiment: sentimentFilter.value })
+    await store.list({
+      page,
+      perPage,
+      sentiment: sentimentFilter.value,
+      spam: spamFilter.value,
+    })
   } catch (e) {
     error.value =
       e instanceof HttpError
@@ -52,7 +71,10 @@ function onPage(event: DataTablePageEvent) {
 }
 
 function onFilterChange() {
-  router.replace({ query: sentimentFilter.value ? { sentiment: sentimentFilter.value } : {} })
+  const query: Record<string, string> = {}
+  if (sentimentFilter.value) query.sentiment = sentimentFilter.value
+  if (spamFilter.value !== 'exclude') query.spam = spamFilter.value
+  router.replace({ query })
   load(1)
 }
 
@@ -71,15 +93,39 @@ onMounted(() => load(1))
   <section class="fl-page">
     <header class="fl-page__head">
       <h1>Feedbacks</h1>
-      <Select
-        v-model="sentimentFilter"
-        :options="sentimentOptions"
-        option-label="label"
-        option-value="value"
-        class="fl-filter"
-        @change="onFilterChange"
-      />
+      <div class="fl-filters">
+        <Select
+          v-model="spamFilter"
+          :options="spamOptions"
+          option-label="label"
+          option-value="value"
+          class="fl-filter"
+          aria-label="Filtrar por spam"
+          @change="onFilterChange"
+        />
+        <Select
+          v-model="sentimentFilter"
+          :options="sentimentOptions"
+          option-label="label"
+          option-value="value"
+          class="fl-filter"
+          placeholder="Todos os sentimentos"
+          aria-label="Filtrar por sentimento"
+          @change="onFilterChange"
+        />
+      </div>
     </header>
+
+    <Message v-if="spamFilter !== 'exclude'" severity="info" :closable="false" class="fl-note">
+      <template v-if="spamFilter === 'only'">
+        Estes são os textos que a IA marcou como spam. Eles ficam fora das listas normais e dos
+        gráficos. Abra um deles e use “Não é spam” se foi engano.
+      </template>
+      <template v-else>
+        Esta lista mostra também o que a IA marcou como spam, com o selo “Spam”. Os gráficos
+        da Visão geral continuam sem eles.
+      </template>
+    </Message>
 
     <Message v-if="error" severity="warn" :closable="false">{{ error }}</Message>
 
@@ -97,7 +143,11 @@ onMounted(() => load(1))
       @row-select="openDetail($event.data)"
     >
       <template #empty>
-        <span v-if="sentimentFilter">
+        <span v-if="spamFilter === 'only'">
+          Nenhum feedback marcado como spam. Quando a IA classificar um texto como ruído, ele
+          aparece aqui para você revisar.
+        </span>
+        <span v-else-if="sentimentFilter">
           Nenhum feedback com esse sentimento. Troque o filtro para “Todos os sentimentos”
           para ver todos.
         </span>
@@ -107,11 +157,14 @@ onMounted(() => load(1))
         </span>
       </template>
 
-      <Column header="Sentimento" style="width: 10rem">
+      <Column header="Sentimento" style="width: 17rem">
         <template #body="{ data }">
           <span :class="sentimentMeta(data.sentiment).chipClass">
             <i :class="sentimentMeta(data.sentiment).icon" aria-hidden="true" />
             {{ sentimentMeta(data.sentiment).label }}
+          </span>
+          <span v-if="data.is_spam" class="fl-sentiment fl-sentiment--noise fl-spam-chip">
+            <i class="pi pi-ban" aria-hidden="true" /> Spam
           </span>
         </template>
       </Column>
@@ -146,8 +199,20 @@ onMounted(() => load(1))
   margin: 0;
   font-size: 1.5rem;
 }
+.fl-filters {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
 .fl-filter {
-  min-width: 15rem;
+  min-width: 12rem;
+}
+.fl-note {
+  margin-bottom: 1rem;
+}
+.fl-spam-chip {
+  margin-left: 0.4rem;
 }
 .fl-count {
   font-family: var(--fl-font-mono);
