@@ -69,8 +69,8 @@ function truncate(text: string, max = 60): string {
         os números e gráficos aparecem aqui.
       </template>
       <template v-else>
-        Ainda não há feedbacks para analisar. Assim que o primeiro chegar pela API
-        (<code>POST /api/feedbacks</code>), os números e gráficos aparecem aqui.
+        Ainda não há feedbacks para analisar. Assim que o primeiro chegar, os números e gráficos
+        aparecem aqui.
       </template>
     </Message>
 
