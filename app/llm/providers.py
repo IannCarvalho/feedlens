@@ -32,7 +32,7 @@ PROVIDERS: dict[str, Provider] = {
         Provider('gemini', 'Google Gemini', 'GEMINI_API_KEY', 'gemini-2.5-flash-lite'),
         # Os dois têm camada gratuita (com limites). A ordem do catálogo é a da
         # cadeia automática (sem LLM_MODELS), então ficam depois dos pagos.
-        Provider('groq', 'Groq', 'GROQ_API_KEY', 'llama-3.3-70b-versatile',
+        Provider('groq', 'Groq', 'GROQ_API_KEY', 'openai/gpt-oss-20b',
                  namespaced_models=True),
         # "openrouter/free" é o roteador de modelos gratuitos do OpenRouter: a lista
         # de ids ":free" muda toda hora, e o roteador escolhe um que esteja no ar.

@@ -529,14 +529,15 @@ Se o principal falha (timeout, cota, chave revogada, indisponibilidade), a anál
 | OpenAI | `OPENAI_API_KEY` | `gpt-4o-mini` (ou `OPENAI_MODEL`, mantido por compatibilidade) |
 | Anthropic | `ANTHROPIC_API_KEY` | `claude-haiku-4-5` |
 | Google Gemini | `GEMINI_API_KEY` | `gemini-2.5-flash-lite` |
-| Groq | `GROQ_API_KEY` | `llama-3.3-70b-versatile` |
+| Groq | `GROQ_API_KEY` | `openai/gpt-oss-20b` |
 | OpenRouter | `OPENROUTER_API_KEY` | `openrouter/free` (roteador de modelos gratuitos) |
 
 **Groq e OpenRouter (camada gratuita).** Ambos têm planos gratuitos, com limites que mudam e que você deve conferir no console de cada um (a cota por minuto e por dia, o que vale para o seu modelo e a política de dados do plano grátis). Servem bem como **reserva** do provedor principal:
 
 - Crie a chave em `console.groq.com` ou `openrouter.ai` e informe em `GROQ_API_KEY` / `OPENROUTER_API_KEY`, ou cadastre na tela *Provedores*.
 - O nome do modelo vai depois do prefixo do provedor. Nesses dois ele pode ter a barra do fabricante: `groq/openai/gpt-oss-20b`, `openrouter/google/gemma-4-31b-it:free`. O padrão do OpenRouter, `openrouter/free`, deixa o OpenRouter escolher um modelo gratuito que esteja no ar (a lista de ids `:free` muda com frequência); para fixar um, use o id completo.
-- Exemplo de cadeia com reserva gratuita: `LLM_MODELS=gemini/gemini-2.5-flash-lite,groq/llama-3.3-70b-versatile,openrouter/openrouter/free`.
+- Exemplo de cadeia com reserva gratuita: `LLM_MODELS=gemini/gemini-2.5-flash-lite,groq/openai/gpt-oss-20b,openrouter/openrouter/free`.
+- **Quais modelos a sua conta enxerga:** o catálogo do Groq varia por conta. Se o teste da chave falhar com `not_found`, o modelo não existe para você (aconteceu com o `llama-3.3-70b-versatile` numa conta gratuita). Liste os disponíveis com `curl -H "Authorization: Bearer $GROQ_API_KEY" https://api.groq.com/openai/v1/models` e cadastre um deles em *Modelo*.
 - Modelo pequeno ou roteado pode classificar pior (spam e funcionalidades, sobretudo em português). Meça com `python -m evals.classification_eval` antes de torná-lo o principal.
 
 Cuidados de segurança:

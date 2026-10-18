@@ -486,10 +486,10 @@ def test_vault_uses_each_new_providers_default_model(admin):
     with patch(PROBE, return_value=_ok()):
         groq = _create(admin, provider="groq", api_key=GROQ_KEY).get_json()
         router = _create(admin, provider="openrouter", api_key=OPENROUTER_KEY).get_json()
-    assert groq["model"] == "llama-3.3-70b-versatile"
+    assert groq["model"] == "openai/gpt-oss-20b"
     assert router["model"] == "openrouter/free"
     assert [c.model_ref for c in store.stored_chain()] == [
-        "groq/llama-3.3-70b-versatile", "openrouter/openrouter/free"]
+        "groq/openai/gpt-oss-20b", "openrouter/openrouter/free"]
 
 
 def test_patch_model_follows_the_providers_slash_rule(admin):

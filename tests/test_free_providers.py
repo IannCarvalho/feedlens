@@ -52,7 +52,7 @@ def test_catalog_has_the_new_providers_with_their_env_keys():
     ("openrouter/google/gemma-4-31b-it:free", "openrouter", "google/gemma-4-31b-it:free"),
     ("openrouter/openrouter/free", "openrouter", "openrouter/free"),
     ("openrouter/", "openrouter", "openrouter/free"),     # modelo omitido = padrão
-    ("groq/", "groq", "llama-3.3-70b-versatile"),
+    ("groq/", "groq", "openai/gpt-oss-20b"),
 ])
 def test_parse_model_ref_accepts_vendor_model_ids(ref, provider_id, model):
     provider, parsed = parse_model_ref(ref)
@@ -104,7 +104,7 @@ def test_server_chain_auto_appends_free_providers_after_paid_ones():
     chain = server_chain(_settings(
         OPENROUTER_API_KEY="sk-or-v1-x", GROQ_API_KEY="gsk_x", GEMINI_API_KEY="g-key"))
     assert [c.model_ref for c in chain] == [
-        "gemini/gemini-2.5-flash-lite", "groq/llama-3.3-70b-versatile", "openrouter/openrouter/free"]
+        "gemini/gemini-2.5-flash-lite", "groq/openai/gpt-oss-20b", "openrouter/openrouter/free"]
     assert all(c.source == "server" for c in chain)
 
 
@@ -129,7 +129,7 @@ def test_server_chain_skips_a_new_provider_without_its_key():
 def test_headers_build_request_credentials_for_the_new_providers():
     groq = credential_from_headers(
         {"X-LLM-Provider": "groq", "X-LLM-Api-Key": "gsk_chave-do-cliente"}, _settings())
-    assert groq.model_ref == "groq/llama-3.3-70b-versatile" and groq.source == "request"
+    assert groq.model_ref == "groq/openai/gpt-oss-20b" and groq.source == "request"
 
     openrouter = credential_from_headers(
         {"X-LLM-Provider": "OpenRouter", "X-LLM-Api-Key": "sk-or-v1-cliente",
