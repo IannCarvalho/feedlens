@@ -143,9 +143,9 @@ onMounted(() => load(1))
     </header>
 
     <Message v-if="analysisFilter === 'unanalyzed'" severity="info" :closable="false" class="fl-note">
-      Estes feedbacks chegaram, mas a IA não conseguiu analisá-los (cota excedida, tempo esgotado
-      etc.). O sentimento “Inconclusivo” deles é só o valor padrão. Abra um e use “Reanalisar com
-      a IA”, ou rode <code>flask reanalyze-pending</code> no servidor para todos de uma vez.
+      Estes feedbacks chegaram, mas a IA não conseguiu analisá-los (por exemplo, limite de uso
+      atingido ou demora na resposta). O “Inconclusivo” deles é só o valor padrão, não uma
+      opinião. Abra um deles e use “Reanalisar com a IA” para tentar de novo.
     </Message>
 
     <Message v-if="spamFilter !== 'exclude'" severity="info" :closable="false" class="fl-note">
@@ -187,8 +187,7 @@ onMounted(() => load(1))
           para ver todos.
         </span>
         <span v-else>
-          Nenhum feedback ainda. Assim que chegarem pela API
-          (<code>POST /api/feedbacks</code>), eles aparecem nesta lista.
+          Nenhum feedback ainda. Assim que os primeiros chegarem, eles aparecem nesta lista.
         </span>
       </template>
 
