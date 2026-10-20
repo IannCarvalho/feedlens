@@ -6,19 +6,96 @@
 
 Uma lente sobre o feedback dos seus usuários: análise automática de feedback com Inteligência Artificial, usando Python, Flask e LLMs.
 
-## Sobre o Projeto
+## Sumário
+
+- [Visão geral](#visão-geral)
+- [Arquitetura](#arquitetura)
+- [Componentes](#componentes)
+- [Destaques técnicos](#destaques-técnicos)
+- [Estrutura do Projeto](#estrutura-do-projeto)
+- [Formulário público (`feedback-form`)](#formulário-público-feedback-form)
+- [Tecnologias Utilizadas](#tecnologias-utilizadas)
+- [Configuração do Ambiente](#configuração-do-ambiente)
+- [Endpoints da API](#endpoints-da-api)
+- [Qualidade da classificação](#qualidade-da-classificação)
+- [Interface Web](#interface-web)
+- [Funcionalidade de E-mail](#funcionalidade-de-e-mail)
+- [Testes e CI](#testes-e-ci)
+- [Considerações de Desenvolvimento](#considerações-de-desenvolvimento)
+- [Status e próximos passos](#status-e-próximos-passos)
+- [Licença](#licença)
+
+## Visão geral
 
 O FeedLens recebe feedbacks de usuários, classifica-os por sentimento, detecta spam e identifica as funcionalidades mais pedidas — e disponibiliza tudo em um dashboard web e em um resumo semanal por e-mail. Ele resolve o gargalo de analisar manualmente feedbacks que chegam de muitos canais (atendimento, comunidades, redes sociais).
 
 A análise é **BYOK (bring your own key) e multi-provedor**: funciona com OpenAI, Anthropic, Google Gemini, Groq ou OpenRouter, usando as chaves do operador (com fallback entre provedores) ou a chave que o próprio cliente envia na requisição.
 
+Há dois fronts, cada um com seu público: o **painel** (Vue 3), onde a equipe vê os números, revisa e corrige a análise, e o **formulário público** (Angular), onde o cliente final escreve o feedback. Os dois falam com o mesmo backend Flask, e a IA nunca é chamada pelo navegador: ela só roda no servidor.
+
 A aplicação é responsável por:
 
 1. **Classificação de feedback** por sentimento (POSITIVO, NEGATIVO, INCONCLUSIVO)
 2. **Identificação de funcionalidades solicitadas** nos feedbacks
-3. **Detecção de spam** nos feedbacks
-4. **Dashboard web** com estatísticas e visualizações
-5. **Resumo semanal** enviado por e-mail aos stakeholders
+3. **Detecção de spam** nos feedbacks, que ficam fora das listas e dos gráficos, mas podem ser revisados e corrigidos no painel
+4. **Reprocessamento** dos feedbacks que a IA não conseguiu analisar (cota excedida, timeout etc.), que ficam marcados como "não analisados" em vez de se passarem por uma opinião
+5. **Dashboard web** com estatísticas e visualizações
+6. **Resumo semanal** enviado por e-mail aos stakeholders
+
+## Arquitetura
+
+```mermaid
+flowchart TD
+    customer([Cliente final])
+    team([Equipe])
+    form["feedback-form<br/>(Angular 22 · formulário público)"]
+    panel["frontend<br/>(Vue 3 · painel)"]
+    api["Flask<br/>(API /api · login · serve o painel)"]
+    llmlayer["app/llm<br/>(cadeia de provedores · LiteLLM)"]
+    llm{{"OpenAI · Anthropic · Gemini · Groq · OpenRouter"}}
+    db[("PostgreSQL ou SQLite")]
+    mail["SMTP<br/>(resumo semanal)"]
+
+    customer --> form
+    form -- "POST /api/feedbacks {id, feedback}" --> api
+    team --> panel
+    panel -- "GET /api/stats · /api/feedbacks<br/>(sessão + CSRF nas alterações)" --> api
+    api --> llmlayer
+    llmlayer -- "qual chave e modelo respondem" --> llm
+    api --> db
+    api -. resumo semanal .-> mail
+
+    classDef py fill:#2b6cb0,stroke:#1a365d,color:#fff;
+    classDef js fill:#b7791f,stroke:#744210,color:#fff;
+    class api,llmlayer py;
+    class form,panel js;
+```
+
+O navegador nunca fala com a IA nem com o banco: o **formulário** só envia o texto, o **painel** só lê e corrige pela API, e o **Flask** decide qual provedor responde, valida a saída do modelo e é a única fonte de verdade sobre o banco.
+
+> Para o fluxo ponta a ponta de um feedback, as decisões de arquitetura (por que dois fronts, por que a IA falhar não perde o feedback, como a cadeia de chaves funciona) e o modelo de segurança, veja o [**ARCHITECTURE.md**](ARCHITECTURE.md).
+
+## Componentes
+
+| Pasta | Stack | Papel |
+|---|---|---|
+| [`app/`](app/) | Python 3.10+, Flask, SQLAlchemy | API REST, login do painel, análise, estatísticas e e-mail. Serve o build do painel. |
+| [`app/llm/`](app/llm/) | LiteLLM, cryptography (Fernet) | Catálogo de provedores, cadeia de credenciais (requisição, cofre, ambiente) e a chamada à LLM. |
+| [`frontend/`](frontend/) | Vue 3, Vite, TypeScript, PrimeVue, Pinia, Chart.js | Painel da equipe: visão geral, feedbacks, detalhe, provedores e login. |
+| [`feedback-form/`](feedback-form/) | Angular 22, TypeScript, Vitest | Formulário público do cliente final, projeto separado com build, CI e deploy próprios. |
+| [`evals/`](evals/) | Python | Avaliação do prompt de classificação contra casos de teste (chama a LLM de verdade). |
+| [`migrations/`](migrations/) | Alembic (Flask-Migrate) | Esquema do banco, versionado. |
+
+## Destaques técnicos
+
+- **Multi-provedor via LiteLLM, com allowlist** — OpenAI, Anthropic, Gemini, Groq e OpenRouter. Prefixos que usariam credenciais do servidor (`bedrock/`, `ollama/`) são recusados, e o provedor sempre sai do nosso prefixo, nunca do que vier num header.
+- **BYOK em três níveis, com fallback** — a chave vem, por precedência, da requisição (`X-LLM-*`), do cofre cifrado ou do ambiente. Se o provedor principal falha, a análise segue para o próximo da cadeia.
+- **A falha da IA não perde o feedback** — com cota excedida ou timeout, o feedback é gravado como "não analisado", com o motivo, fora dos números do dashboard, e pode ser reanalisado pelo painel ou por `flask reanalyze-pending`.
+- **Humano no circuito** — o que a IA marcou como spam fica fora das listas por padrão, mas dá para listar, conferir e corrigir. O sentimento também pode ser corrigido à mão.
+- **Cofre de chaves cifrado** — chaves de provedor salvas com Fernet, com rotação sem parar o app, e que nunca voltam pela API (só os 4 últimos caracteres).
+- **Prompt medido, não adivinhado** — o prompt de classificação tem testes de contrato e um harness de avaliação (`evals/`) com casos de ajuste e casos reservados.
+- **Segurança por padrão** — senha única do painel com CSRF, `SECRET_KEY` forte exigida em produção, rate limit nos endpoints públicos, chave de ingestão opcional e proteção contra prompt injection.
+- **CI completo** — testes em Python 3.10 e 3.11, migrations e testes num PostgreSQL de verdade, typecheck, lint e build dos dois fronts e build da imagem Docker com smoke test.
 
 ## Estrutura do Projeto
 
@@ -27,14 +104,25 @@ feedlens/
 ├── app/                           # Aplicação Flask e API
 │   ├── __init__.py                # App factory e registro das extensões
 │   ├── auth.py                    # Sessão, login do painel e proteção de rotas
+│   ├── cli.py                     # Comandos flask: reanalyze-pending e rotate-llm-keys
 │   ├── config.py                  # Configurações da aplicação
 │   ├── csrf.py                    # Tokens CSRF da sessão
-│   ├── models/                    # Modelos SQLAlchemy
+│   ├── extensions.py              # Rate limit (Flask-Limiter) e CORS
+│   ├── ingest_auth.py             # Chave de ingestão opcional (X-API-Key)
+│   ├── scheduling.py              # Agendador do resumo semanal (python -m app.scheduling)
+│   ├── llm/                       # Camada de IA via LiteLLM
+│   │   ├── providers.py           # Catálogo/allowlist de provedores e validação de modelo
+│   │   ├── credentials.py         # Cadeia de credenciais: requisição, cofre e ambiente
+│   │   ├── client.py              # Chamada à LLM com fallback entre provedores
+│   │   └── vault.py               # Cifra (Fernet) das chaves salvas
+│   ├── models/                    # Modelos SQLAlchemy (feedbacks, funcionalidades, chaves)
 │   ├── routes/
-│   │   ├── api.py                 # Endpoints REST de ingestão, leitura e BYOK
+│   │   ├── api.py                 # Endpoints REST de ingestão, leitura, correção e reanálise
+│   │   ├── settings_api.py        # Endpoints do cofre de provedores
+│   │   ├── health.py              # Probe /health
 │   │   ├── spa.py                 # Entrega do build Vue e deep-links
 │   │   └── web.py                 # Compatibilidade das URLs antigas
-│   └── services/                  # Análise, estatísticas, e-mail e feedbacks
+│   └── services/                  # Análise, estatísticas, e-mail, feedbacks e cofre
 ├── frontend/                      # SPA Vue 3 + Vite + TypeScript
 │   ├── src/components/            # Logo, gráficos e componentes reutilizáveis
 │   ├── src/lib/                   # Cliente HTTP e utilitários
@@ -44,11 +132,18 @@ feedlens/
 ├── feedback-form/                 # Formulário público (Angular 22), projeto separado
 │   ├── public/config.json         # URL da API e modo demonstração, lidos em tempo de execução
 │   └── src/app/                   # core (envio, mocks), features (formulário, obrigado, demo)
+├── evals/                         # Avaliação do prompt de classificação (casos e harness)
 ├── migrations/                    # Migrações de banco de dados (Alembic)
+├── tests/                         # Suíte pytest do backend
+├── .github/workflows/ci.yml       # CI: backend, Postgres, painel, formulário e Docker
 ├── .env-example                   # Exemplo de variáveis de ambiente
+├── docker-compose.yml             # Aplicação + PostgreSQL para rodar com Docker
 ├── Dockerfile                     # Build multi-stage do front e da aplicação
+├── gunicorn.conf.py               # Workers, threads e timeout do gunicorn
+├── ARCHITECTURE.md                # Fluxos, decisões de arquitetura e segurança
 ├── README.md                      # Este arquivo
 ├── requirements.txt               # Dependências Python
+├── requirements-dev.txt           # Dependências de teste (inclui as de produção)
 ├── run.py                         # Ponto de entrada de desenvolvimento
 └── wsgi.py                        # Entrada WSGI para produção
 ```
@@ -73,16 +168,18 @@ npm start          # http://127.0.0.1:4200, em modo demonstração (dados mockad
 npm run typecheck; npm run lint; npm test; npm run build
 ```
 
-**Modo demonstração** (`"useMock": true`, o padrão do `config.json` do repositório): não usa servidor. Um painel recolhido, que não existe com `useMock: false`, troca o cenário (envio normal, repetido, lento, muitos envios, instável, sem conexão, recusado), preenche exemplos e mostra o corpo que seria enviado. Também dá para abrir `?cenario=sem-conexao` na URL. Para usar a API real, troque o `config.json` por `{ "apiBaseUrl": "https://sua-api", "useMock": false, "productName": "Seu Produto" }`.
+**Modo demonstração** (`"useMock": true`, o padrão do `config.json` do repositório): não usa servidor, **então nada é enviado de verdade e nada aparece no painel**. Um painel recolhido, que não existe com `useMock: false`, troca o cenário (envio normal, repetido, lento, muitos envios, instável, sem conexão, recusado), preenche exemplos e mostra o corpo que seria enviado. Também dá para abrir `?cenario=sem-conexao` na URL. Para usar a API real, troque o `config.json` por `{ "apiBaseUrl": "https://sua-api", "useMock": false, "productName": "Seu Produto" }` (veja [Rodando os dois fronts juntos](#rodando-os-dois-fronts-juntos)).
 
 ## Tecnologias Utilizadas
 
 - **Backend:**
   - Python 3.10+
-  - Flask (framework web)
+  - Flask (framework web) e Gunicorn (produção)
   - SQLAlchemy & Flask-SQLAlchemy (ORM)
   - Flask-Migrate (migrações de banco de dados)
+  - Flask-Limiter (rate limit) e Flask-CORS
   - APScheduler (agendamento de tarefas)
+  - cryptography (Fernet, cofre de chaves)
 
 - **Banco de Dados:**
   - PostgreSQL (recomendado)
@@ -101,6 +198,10 @@ npm run typecheck; npm run lint; npm test; npm run build
 
 - **Envio de E-mail:**
   - SMTP (via `smtplib` do Python)
+
+- **Qualidade:**
+  - pytest (backend), Ruff (lint), Vitest (formulário Angular), ESLint e vue-tsc (painel)
+  - GitHub Actions e Docker
 
 - **Ambiente:**
   - python-dotenv (gerenciamento de variáveis de ambiente)
@@ -216,6 +317,24 @@ Problemas comuns ao rodar localmente:
 - **A raiz responde `503`:** falta compilar o painel (`npm --prefix frontend ci` e depois `npm --prefix frontend run build`).
 - **`no such table` no log:** faltou aplicar as migrations (`flask db upgrade`).
 - **`Port 5000 is in use by another program`:** outro processo já usa a porta. Pare-o ou rode `flask run --port 5001`.
+- **O servidor continua com o código antigo depois de um `git pull`:** o Python só lê o código ao subir. Reinicie o `flask run`. O build do painel, ao contrário, o Flask lê do disco a cada acesso: basta recompilar e dar `Ctrl+F5` no navegador.
+
+Para desenvolver o painel com recarga instantânea, rode `npm --prefix frontend run dev` (porta 5173): o Vite encaminha `/api`, `/auth`, `/login`, `/logout` e `/health` para o Flask em `127.0.0.1:5000`, mantendo a mesma origem para o cookie de sessão.
+
+### Rodando os dois fronts juntos
+
+A ordem importa (cada passo depende do anterior):
+
+1. **Backend e painel:** com o ambiente virtual ativo e o `.env` pronto, rode `flask db upgrade`, compile o painel (`npm --prefix frontend ci` e `npm --prefix frontend run build`) e suba `flask run`. O painel abre em `http://localhost:5000`.
+2. **Provedor de IA:** sem nenhuma chave o envio responde `503 llm_not_configured`. Ponha uma chave no `.env` ou, com `DASHBOARD_PASSWORD` e `FEEDLENS_ENCRYPTION_KEY` definidas, cadastre-a em **Provedores**. O botão de teste da tela confirma se a chave e o modelo existem na sua conta.
+3. **Formulário:** em outro terminal, `cd feedback-form`, `npm ci` e `npm start` (`http://127.0.0.1:4200`). Ele sobe em modo demonstração; para enviar de verdade, ponha `"useMock": false` no `public/config.json`, com `apiBaseUrl` em `http://127.0.0.1:5000`. Não commite essa alteração: o padrão do repositório precisa continuar `true`.
+4. **Conferir:** envie um texto que pareça feedback sobre um produto ou serviço e abra **Feedbacks** no painel.
+
+Se o feedback enviado não aparece no painel, as causas mais comuns são:
+
+- **O formulário ainda está em modo demonstração** (`useMock: true`): nada chegou ao servidor. Com `useMock: false` o painel de demonstração some da tela.
+- **A IA marcou o texto como spam** (letra de música, propaganda, texto sem sentido): ele não entra nas listas nem nos gráficos. Em **Feedbacks**, mude o filtro de spam para "Só spam" ou "Com spam"; no detalhe, "Não é spam" devolve o feedback às listas.
+- **A IA não conseguiu analisar** (cota excedida, timeout): o feedback é gravado, mas fica de fora dos números da Visão geral e aparece com o selo "Não analisado". Use "Reanalisar com a IA" no detalhe quando o provedor se recuperar.
 
 ### Autenticação do Dashboard
 
@@ -251,7 +370,7 @@ Proteções do login e da sessão:
 
 Sem credencial a resposta é `401` JSON com `WWW-Authenticate: Bearer`. O `POST /api/feedbacks` (ingestão) e o `/health` continuam públicos.
 
-A API (`/api/...`) **não** é afetada por essa autenticação de formulário: o `POST /api/feedbacks` tem o próprio contrato de ingestão. A leitura (`GET`) tem a regra descrita abaixo.
+A API (`/api/...`) **não** é afetada por essa autenticação de formulário: o `POST /api/feedbacks` tem o próprio contrato de ingestão. A leitura (`GET`) tem a regra descrita acima, em *API de leitura*.
 
 ### Executando com Docker
 
@@ -385,6 +504,14 @@ curl -X POST https://seu-host/api/feedbacks \
 
 **Descrição:** Retorna um feedback específico pelo seu UUID. Mesma autenticação da listagem. Responde `400` para um id malformado e `404` quando não existe. Funciona também para feedbacks marcados como spam.
 
+### Estatísticas do Dashboard
+
+**Endpoint:** `GET /api/stats`
+
+**Descrição:** Alimenta a Visão geral do painel: total, contagem e percentuais por sentimento, ranking de funcionalidades e feedbacks recentes. Mesma autenticação da listagem (sessão do painel ou `API_READ_TOKEN`), já que expõe o conteúdo dos feedbacks.
+
+Os números e gráficos (`total_feedbacks`, `sentiment_counts`, `sentiment_percentages`, `top_features`) ignoram spam e os feedbacks **não analisados**. Os `recent_feedbacks` mantêm os não analisados, com `analysis_status`, e `unanalyzed` informa quantos são. Sem nenhum feedback analisado a resposta é só `{"has_data": false, "unanalyzed": N}`.
+
 ### Corrigir a Análise de um Feedback
 
 **Endpoint:** `PATCH /api/feedbacks/<id>`
@@ -501,18 +628,53 @@ O resumo sai toda segunda-feira às 8h (fuso `SCHEDULER_TIMEZONE`, padrão `Amer
 
 O SMTP usa STARTTLS com certificado verificado e `EMAIL_TIMEOUT` (padrão 30s). `APP_BASE_URL` define o link do painel no e-mail. Sem configuração de e-mail o app sobe normalmente (inclusive em produção) e só registra um aviso.
 
+## Testes e CI
+
+Backend (com o ambiente virtual ativo):
+
+```bash
+pip install -r requirements-dev.txt
+pip install ruff
+ruff check .
+pytest tests
+```
+
+O `pytest.ini` já aponta para `tests/` e põe a raiz no `sys.path`. A suíte não faz chamadas reais a provedores de LLM, então não gasta cota nem precisa de chave. Ela cobre a API (ingestão, leitura, correção e reanálise), autenticação e CSRF, o cofre de chaves, a cadeia de provedores, o contrato do prompt, as estatísticas, o SPA e as migrations. As migrations também rodam num PostgreSQL de verdade no CI (`flask db upgrade`, `flask db check`, `flask db downgrade base`), porque o SQLite dos testes não pega estouro de `VARCHAR`, chave estrangeira nem `timestamptz`.
+
+Fronts (em `frontend/` e em `feedback-form/`):
+
+```bash
+npm ci
+npm run typecheck
+npm run lint
+npm run build
+npm test            # só no feedback-form (Vitest)
+```
+
+O painel Vue é validado por typecheck, lint e build; ele ainda não tem testes automatizados de componente.
+
+O workflow [`ci.yml`](.github/workflows/ci.yml) roda em todo push e PR para a `main`, com cinco jobs:
+
+| Job | O que valida |
+|---|---|
+| `test` | Ruff e pytest em Python 3.10 e 3.11 |
+| `postgres` | Migrations (subir, checar, descer) e pytest num PostgreSQL 16 |
+| `frontend` | Typecheck, ESLint e build do painel Vue |
+| `feedback-form` | Typecheck, ESLint, Vitest e build (com orçamento de bundle) do formulário Angular |
+| `docker` | Build da imagem e smoke test: `/health`, o `index.html` do painel e um asset JS |
+
 ## Considerações de Desenvolvimento
 
 ### Padrões Arquiteturais
 
 - **Arquitetura em Camadas:** separação de responsabilidades
   - Routes: controladores de requisições e respostas
-  - Services: lógica de negócio e operações complexas
+  - Services: lógica de negócio e consultas ao banco (`FeedbackService`, `Statistics`, `FeedbackAnalyzer`)
   - Models: estrutura de dados e persistência
 
-- **Injeção de Dependência:** serviços são instanciados e injetados onde necessário
+- **App factory:** `create_app()` monta a aplicação, registra os blueprints e as extensões (banco, migrations, rate limit, CORS); as extensões compartilhadas ficam em `app/extensions.py` para evitar import circular.
 
-- **Padrão Repository:** abstração do acesso ao banco de dados através dos serviços
+- **Configuração de LLM resolvida a cada chamada:** o analisador não guarda chave nem modelo. A cadeia de provedores é montada em cada análise, então trocar a ordem no cofre ou enviar um BYOK vale na hora, sem reiniciar.
 
 ### Provedores de LLM (BYOK)
 
@@ -547,17 +709,35 @@ Cuidados de segurança:
 - **Prompt injection:** as instruções vão na mensagem de sistema e o feedback vai delimitado, como dado. Códigos de feature são normalizados (`EDICAO_DE_PERFIL`, até 50 caracteres, no máximo 10 por feedback), e o HTML gerado para o e-mail passa por sanitização: só tags de formatação, sem links, imagens ou atributos.
 - **Custo e latência:** cada chamada loga provedor, latência, tokens e custo estimado. O LiteLLM é importado sob demanda (e aquecido em segundo plano no `wsgi.py`), então boot, CLI e testes não pagam seu import.
 
-## Possíveis Melhorias
+## Status e próximos passos
 
-Já entregues: autenticação por senha no dashboard, SPA Vue 3, cofre BYOK, suite de testes (pytest), CI (GitHub Actions), dockerização e resumo de e-mail gerado por LLM.
+**Já entregue:**
 
-Próximos passos possíveis:
+- análise por sentimento, spam e funcionalidades pedidas, com cinco provedores de LLM (OpenAI, Anthropic, Gemini, Groq e OpenRouter) e fallback entre eles;
+- BYOK por requisição e cofre de chaves cifrado, com cadastro, edição de modelo e chave, teste, ordem e remoção pelo painel;
+- painel Vue 3 com login por senha e CSRF, e formulário público em Angular;
+- revisão humana: filtro de spam, correção de spam e de sentimento;
+- feedbacks "não analisados" identificáveis e reprocessáveis (painel e `flask reanalyze-pending`);
+- rate limiting nos endpoints públicos, chave de ingestão opcional e CORS configurável;
+- resumo semanal por e-mail gerado por LLM, com fallback para um template estático;
+- avaliação do prompt (`evals/`), suíte de testes, CI com Postgres e Docker.
+
+**Limitações conhecidas** (veja também o [ARCHITECTURE.md](ARCHITECTURE.md#6-limitações-conhecidas-e-evolução)):
+
+- **A análise é síncrona:** o `POST /api/feedbacks` espera a IA responder. Com o provedor lento, quem envia espera (o formulário avisa "Ainda enviando..."). Gravar na hora e analisar depois é a evolução natural.
+- **Formulário público e chave de ingestão:** um site público não guarda segredo, então com `INGEST_API_KEY` ligada o formulário recebe `401`. Receber pelo seu backend e reenviar com a chave é o caminho hoje.
+- **Sem histórico de correções:** a troca manual de sentimento ou de spam fica só numa linha do log do servidor; não há registro de quem corrigiu o quê.
+- **O resumo semanal ainda conta os "não analisados"** como Inconclusivos: as consultas do e-mail ignoram spam, mas não o estado da análise, diferente do dashboard.
+- **Reanálise em lote só pela linha de comando:** o painel reanalisa um feedback por vez.
+- **O painel Vue não tem testes de componente**, só typecheck, lint e build.
+- **Camadas gratuitas de LLM têm limites** de requisições e de tokens por minuto e por dia. Meça com `evals/` antes de usar um modelo gratuito como principal.
+
+**Próximos passos possíveis:**
 
 1. **UI/UX:** mais filtros, ordenação, responsividade e exportação de relatórios (PDF/CSV)
-2. **Escalabilidade:** cache para consultas frequentes e fila de processamento para análises
-3. **Rate-limiting:** proteção do endpoint público de ingestão contra abuso
-4. **Monitoramento:** integração com logging/observabilidade e métricas de desempenho
-5. **Relatórios:** exportação de dados e indicadores em formatos como CSV e PDF
+2. **Escalabilidade:** cache para consultas frequentes e fila de processamento para as análises
+3. **Monitoramento:** integração com logging/observabilidade e métricas de desempenho
+4. **Qualidade da IA:** registrar os resultados da avaliação por modelo e provedor
 
 ## Licença
 
