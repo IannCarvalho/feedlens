@@ -138,6 +138,11 @@ class Config:
     # Teto de testes de chave (cada um é uma chamada paga ao provedor).
     RATELIMIT_SETTINGS_TEST: str = os.environ.get(
         'RATELIMIT_SETTINGS_TEST', '10 per minute')
+    # Teto da reanálise EM LOTE pelo painel (POST /api/feedbacks/reanalyze-
+    # pending). Cada feedback do lote é UMA chamada paga ao provedor, então o
+    # limite protege a cota de quem opera o painel.
+    RATELIMIT_REANALYZE: str = os.environ.get(
+        'RATELIMIT_REANALYZE', '6 per minute')
 
     # Email configuration
     EMAIL_HOST: Optional[str] = os.environ.get('EMAIL_HOST')

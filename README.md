@@ -92,7 +92,7 @@ Os dois repositórios de front nasceram das pastas `frontend/` e `feedback-form/
 
 - **Multi-provedor via LiteLLM, com allowlist** — OpenAI, Anthropic, Gemini, Groq e OpenRouter. Prefixos que usariam credenciais do servidor (`bedrock/`, `ollama/`) são recusados, e o provedor sempre sai do nosso prefixo, nunca do que vier num header.
 - **BYOK em três níveis, com fallback** — a chave vem, por precedência, da requisição (`X-LLM-*`), do cofre cifrado ou do ambiente. Se o provedor principal falha, a análise segue para o próximo da cadeia.
-- **A falha da IA não perde o feedback** — com cota excedida ou timeout, o feedback é gravado como "não analisado", com o motivo, fora dos números do dashboard, e pode ser reanalisado pelo painel ou por `flask reanalyze-pending`.
+- **A falha da IA não perde o feedback** — com cota excedida ou timeout, o feedback é gravado como "não analisado", com o motivo, fora dos números do dashboard, e pode ser reanalisado pelo painel (um a um ou em lote) ou por `flask reanalyze-pending`.
 - **Humano no circuito** — o que a IA marcou como spam fica fora das listas por padrão, mas dá para listar, conferir e corrigir. O sentimento também pode ser corrigido à mão.
 - **Cofre de chaves cifrado** — chaves de provedor salvas com Fernet, com rotação sem parar o app, e que nunca voltam pela API (só os 4 últimos caracteres).
 - **Prompt medido, não adivinhado** — o prompt de classificação tem testes de contrato e um harness de avaliação (`evals/`) com casos de ajuste e casos reservados.
@@ -325,7 +325,7 @@ Se o feedback enviado não aparece no painel, as causas mais comuns são:
 
 - **O formulário ainda está em modo demonstração** (`useMock: true`): nada chegou ao servidor. Com `useMock: false` o painel de demonstração some da tela.
 - **A IA marcou o texto como spam** (letra de música, propaganda, texto sem sentido): ele não entra nas listas nem nos gráficos. Em **Feedbacks**, mude o filtro de spam para "Só spam" ou "Com spam"; no detalhe, "Não é spam" devolve o feedback às listas.
-- **A IA não conseguiu analisar** (cota excedida, timeout): o feedback é gravado, mas fica de fora dos números da Visão geral e aparece com o selo "Não analisado". Use "Reanalisar com a IA" no detalhe quando o provedor se recuperar.
+- **A IA não conseguiu analisar** (cota excedida, timeout): o feedback é gravado, mas fica de fora dos números da Visão geral e aparece com o selo "Não analisado". Use "Reanalisar com a IA" no detalhe quando o provedor se recuperar, ou reprocesse vários de uma vez pelo botão de reanálise em lote. Cada feedback reanalisado é uma nova chamada ao provedor de IA, então o lote processa poucos por vez e para no primeiro erro.
 
 ### Autenticação do Dashboard
 
@@ -360,6 +360,16 @@ Proteções do login e da sessão:
 - **`Authorization: Bearer <API_READ_TOKEN>`:** para clientes servidor-a-servidor. Mínimo de 24 caracteres (`python -c "import secrets; print(secrets.token_urlsafe(32))"`). Não vá no JavaScript de um site público: quem abre o site lê o token. O token não é aceito na query string, para não parar em log nem em histórico.
 
 Sem credencial a resposta é `401` JSON com `WWW-Authenticate: Bearer`. O `POST /api/feedbacks` (ingestão) e o `/health` continuam públicos.
+
+**Ações do painel (sessão + CSRF):** corrigir e reanalisar são ações de quem opera o painel, exigem a sessão do painel mais o header `X-CSRF-Token` (nunca o `API_READ_TOKEN`) e respondem `403` sem `DASHBOARD_PASSWORD`.
+
+| Rota | O que faz |
+|---|---|
+| `PATCH /api/feedbacks/<id>` | Corrige a classificação (`is_spam` e/ou `sentiment`). |
+| `POST /api/feedbacks/<id>/reanalyze` | Reanalisa um feedback. |
+| `POST /api/feedbacks/reanalyze-pending` | Reanalisa EM LOTE os pendentes. Corpo JSON opcional `{"limit": N}` (1..10, padrão 5); fora da faixa responde `400`. Síncrono, para no primeiro erro de provedor, e responde `{processed, analyzed, failed, remaining, stopped_reason}`. |
+
+> **Cada feedback reanalisado é uma chamada paga ao provedor de IA.** Por isso o lote é pequeno e tem rate limit próprio (`RATELIMIT_REANALYZE`, padrão `6 per minute`). Para reprocessar um volume maior, use `flask reanalyze-pending` no servidor.
 
 A API (`/api/...`) **não** é afetada por essa autenticação de formulário: o `POST /api/feedbacks` tem o próprio contrato de ingestão. A leitura (`GET`) tem a regra descrita acima, em *API de leitura*.
 

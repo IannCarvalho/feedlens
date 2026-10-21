@@ -133,14 +133,14 @@ Pontos-chave do fluxo:
 
 Do lado do painel, a equipe faz login (cookie de sessão), e o Vue lê
 `GET /api/stats` e `GET /api/feedbacks`. Corrigir ou reanalisar um feedback são
-`PATCH /api/feedbacks/<id>` e `POST /api/feedbacks/<id>/reanalyze`, sempre com o
-token CSRF.
+`PATCH /api/feedbacks/<id>`, `POST /api/feedbacks/<id>/reanalyze` e, em lote,
+`POST /api/feedbacks/reanalyze-pending`, sempre com o token CSRF.
 
 | Operação | Rota | Quem pode |
 |---|---|---|
 | Enviar feedback | `POST /api/feedbacks` | Público; exige `X-API-Key` se `INGEST_API_KEY` estiver definida (ou `Origin` em `INGEST_PUBLIC_ORIGINS`, sob rate limit e teto diário) |
 | Ler (listar, detalhe, estatísticas) | `GET /api/feedbacks`, `/api/feedbacks/<id>`, `/api/stats` | Sessão do painel ou `Bearer API_READ_TOKEN`; aberto só se nenhum dos dois estiver definido |
-| Corrigir ou reanalisar | `PATCH /api/feedbacks/<id>`, `POST /api/feedbacks/<id>/reanalyze` | **Só** a sessão do painel + `X-CSRF-Token`; `403` sem `DASHBOARD_PASSWORD` |
+| Corrigir ou reanalisar | `PATCH /api/feedbacks/<id>`, `POST /api/feedbacks/<id>/reanalyze`, `POST /api/feedbacks/reanalyze-pending` (lote) | **Só** a sessão do painel + `X-CSRF-Token`; `403` sem `DASHBOARD_PASSWORD`. O lote tem rate limit próprio (`RATELIMIT_REANALYZE`) — cada feedback é uma chamada paga ao provedor |
 | Gerir chaves de provedor | `/api/settings/providers…` | Sessão do painel + CSRF; exige `DASHBOARD_PASSWORD` e `FEEDLENS_ENCRYPTION_KEY` |
 
 ---
@@ -245,10 +245,13 @@ do modelo. A marcação explícita resolve três coisas:
 - **Não poluir os números:** total, percentuais, gráfico de sentimento e ranking de
   funcionalidades ignoram os não analisados (`analyzed_only` em `Statistics`). Eles
   continuam na lista e nos recentes, e a Visão geral avisa quantos são.
-- **Reprocessar:** botão "Reanalisar com a IA" (`POST /api/feedbacks/<id>/reanalyze`)
-  ou, em lote, `flask reanalyze-pending`, que para depois de `--stop-after` falhas
-  seguidas (padrão 3) em vez de gastar chamadas quando a cota acabou. Se a IA falhar
-  de novo, nada do que existia é sobrescrito.
+- **Reprocessar:** botão "Reanalisar com a IA" (`POST /api/feedbacks/<id>/reanalyze`),
+  o botão de reanálise em lote do painel (`POST /api/feedbacks/reanalyze-pending`,
+  lote pequeno e síncrono, para no primeiro erro de provedor) ou, pela linha de
+  comando, `flask reanalyze-pending`, que para depois de `--stop-after` falhas
+  seguidas (padrão 3) em vez de gastar chamadas quando a cota acabou. Cada feedback
+  reprocessado é uma chamada paga ao provedor. Se a IA falhar de novo, nada do que
+  existia é sobrescrito.
 
 Detalhes que valem saber: os feedbacks anteriores à migration `0005` ficam como
 `analyzed`, porque não há como saber depois quais foram o padrão; corrigir o
@@ -385,8 +388,13 @@ O repositório não traz configuração de uma hospedagem específica: o `Docker
   `evals/` antes de torná-lo o principal.
 - **Sem histórico de correções.** A troca manual de sentimento ou de spam fica só
   numa linha do log do servidor.
-- **Reanálise em lote só pela linha de comando.** O painel reanalisa um feedback por
-  vez.
+- **Reanálise em lote pelo painel é síncrona e pequena.** O painel reanalisa um
+  feedback por vez (`POST /api/feedbacks/<id>/reanalyze`) ou um lote pequeno
+  (`POST /api/feedbacks/reanalyze-pending`, 1..10, padrão 5). O lote é síncrono de
+  propósito (evita timeout de requisição web) e para no primeiro erro de provedor
+  (`stopped_reason: "provider_error"`); cada feedback é uma chamada paga, então tem
+  rate limit próprio (`RATELIMIT_REANALYZE`). Para reprocessar um volume maior de
+  uma vez, a linha de comando `flask reanalyze-pending` continua sendo o caminho.
 - **O painel Vue não tem testes de componente.** É validado por typecheck, lint e
   build no repositório do painel; o formulário Angular tem testes com Vitest no dele.
 - **O contrato entre os repositórios é mantido à mão.** Não há OpenAPI nem teste que
