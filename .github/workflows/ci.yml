@@ -99,37 +99,6 @@ jobs:
       - name: Run tests on Postgres
         run: pytest tests
 
-  frontend:
-    # Compila o front Vue (typecheck + lint + build). Garante que o painel
-    # continua buildável a cada PR; o artefato é gerado no deploy, não comitado.
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          # O painel exige Node >= 24.15 (engines em frontend/package.json);
-          # "24" resolve para a última 24.x publicada.
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Lint (eslint)
-        run: npm run lint
-
-      - name: Build
-        run: npm run build
-
   docker:
     # Builda a imagem de produção e confere que ela serve o painel: o painel
     # não vem deste repositório, o Dockerfile o baixa do release do
@@ -162,36 +131,3 @@ jobs:
       - name: Logs do container
         if: failure()
         run: docker logs feedlens
-
-  feedback-form:
-    # Formulário público (Angular 22). Projeto separado do painel: tem o próprio
-    # package.json, build e deploy, e o Flask não o serve.
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: feedback-form
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          # Angular 22 exige Node >= 24.15 (ou 22.22.3); "24" resolve para a última 24.x.
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: feedback-form/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Lint (eslint)
-        run: npm run lint
-
-      - name: Testes
-        run: npm test
-
-      - name: Build (inclui o orçamento de bundle)
-        run: npm run build

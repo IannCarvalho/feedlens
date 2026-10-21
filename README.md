@@ -10,10 +10,10 @@ Uma lente sobre o feedback dos seus usuários: análise automática de feedback 
 
 - [Visão geral](#visão-geral)
 - [Arquitetura](#arquitetura)
-- [Componentes](#componentes)
+- [Componentes e repositórios](#componentes-e-repositórios)
 - [Destaques técnicos](#destaques-técnicos)
 - [Estrutura do Projeto](#estrutura-do-projeto)
-- [Formulário público (`feedback-form`)](#formulário-público-feedback-form)
+- [Formulário público (`feedlens-form`)](#formulário-público-feedlens-form)
 - [Tecnologias Utilizadas](#tecnologias-utilizadas)
 - [Configuração do Ambiente](#configuração-do-ambiente)
 - [Endpoints da API](#endpoints-da-api)
@@ -31,7 +31,7 @@ O FeedLens recebe feedbacks de usuários, classifica-os por sentimento, detecta 
 
 A análise é **BYOK (bring your own key) e multi-provedor**: funciona com OpenAI, Anthropic, Google Gemini, Groq ou OpenRouter, usando as chaves do operador (com fallback entre provedores) ou a chave que o próprio cliente envia na requisição.
 
-Há dois fronts, cada um com seu público: o **painel** (Vue 3), onde a equipe vê os números, revisa e corrige a análise, e o **formulário público** (Angular), onde o cliente final escreve o feedback. Os dois falam com o mesmo backend Flask, e a IA nunca é chamada pelo navegador: ela só roda no servidor.
+O FeedLens tem três partes, cada uma no seu repositório. **Este repositório é o backend** (Flask): API, análise por IA, banco, login e e-mail. O **painel** (Vue 3), onde a equipe vê os números, revisa e corrige a análise, vive em [feedlens-panel](https://github.com/IannCarvalho/feedlens-panel) e é embutido na imagem deste backend a partir de um release com checksum. O **formulário público** (Angular), onde o cliente final escreve o feedback, vive em [feedlens-form](https://github.com/IannCarvalho/feedlens-form). Os dois falam com este backend, e a IA nunca é chamada pelo navegador: ela só roda no servidor.
 
 A aplicação é responsável por:
 
@@ -48,8 +48,8 @@ A aplicação é responsável por:
 flowchart TD
     customer([Cliente final])
     team([Equipe])
-    form["feedback-form<br/>(Angular 22 · formulário público)"]
-    panel["frontend<br/>(Vue 3 · painel)"]
+    form["feedlens-form<br/>(Angular 22 · formulário público)"]
+    panel["feedlens-panel<br/>(Vue 3 · painel, embutido na imagem)"]
     api["Flask<br/>(API /api · login · serve o painel)"]
     llmlayer["app/llm<br/>(cadeia de provedores · LiteLLM)"]
     llm{{"OpenAI · Anthropic · Gemini · Groq · OpenRouter"}}
@@ -75,16 +75,18 @@ O navegador nunca fala com a IA nem com o banco: o **formulário** só envia o t
 
 > Para o fluxo ponta a ponta de um feedback, as decisões de arquitetura (por que dois fronts, por que a IA falhar não perde o feedback, como a cadeia de chaves funciona) e o modelo de segurança, veja o [**ARCHITECTURE.md**](ARCHITECTURE.md).
 
-## Componentes
+## Componentes e repositórios
 
-| Pasta | Stack | Papel |
+| Onde | Stack | Papel |
 |---|---|---|
-| [`app/`](app/) | Python 3.10+, Flask, SQLAlchemy | API REST, login do painel, análise, estatísticas e e-mail. Serve o build do painel. |
+| [`app/`](app/) (este repositório) | Python 3.10+, Flask, SQLAlchemy | API REST, login do painel, análise, estatísticas e e-mail. Serve o painel já compilado. |
 | [`app/llm/`](app/llm/) | LiteLLM, cryptography (Fernet) | Catálogo de provedores, cadeia de credenciais (requisição, cofre, ambiente) e a chamada à LLM. |
-| [`frontend/`](frontend/) | Vue 3, Vite, TypeScript, PrimeVue, Pinia, Chart.js | Painel da equipe: visão geral, feedbacks, detalhe, provedores e login. |
-| [`feedback-form/`](feedback-form/) | Angular 22, TypeScript, Vitest | Formulário público do cliente final, projeto separado com build, CI e deploy próprios. |
 | [`evals/`](evals/) | Python | Avaliação do prompt de classificação contra casos de teste (chama a LLM de verdade). |
 | [`migrations/`](migrations/) | Alembic (Flask-Migrate) | Esquema do banco, versionado. |
+| [feedlens-panel](https://github.com/IannCarvalho/feedlens-panel) | Vue 3, Vite, TypeScript, PrimeVue, Pinia, Chart.js | Painel da equipe: visão geral, feedbacks, detalhe, provedores e login. Publicado como release (tarball + sha256) que a imagem deste backend baixa. |
+| [feedlens-form](https://github.com/IannCarvalho/feedlens-form) | Angular 22, TypeScript, Vitest, nginx | Formulário público do cliente final: site estático independente, com CI, Docker e deploy próprios. |
+
+Os dois repositórios de front nasceram das pastas `frontend/` e `feedback-form/` deste repositório, com o histórico preservado. O estado de antes da separação está na tag [`pre-segregacao`](https://github.com/IannCarvalho/feedlens/tree/pre-segregacao).
 
 ## Destaques técnicos
 
@@ -95,7 +97,7 @@ O navegador nunca fala com a IA nem com o banco: o **formulário** só envia o t
 - **Cofre de chaves cifrado** — chaves de provedor salvas com Fernet, com rotação sem parar o app, e que nunca voltam pela API (só os 4 últimos caracteres).
 - **Prompt medido, não adivinhado** — o prompt de classificação tem testes de contrato e um harness de avaliação (`evals/`) com casos de ajuste e casos reservados.
 - **Segurança por padrão** — senha única do painel com CSRF, `SECRET_KEY` forte exigida em produção, rate limit nos endpoints públicos, chave de ingestão opcional e proteção contra prompt injection.
-- **CI completo** — testes em Python 3.10 e 3.11, migrations e testes num PostgreSQL de verdade, typecheck, lint e build dos dois fronts e build da imagem Docker com smoke test.
+- **CI completo** — testes em Python 3.10 e 3.11, migrations e testes num PostgreSQL de verdade, e build da imagem Docker (que baixa o painel do release, com checksum) com smoke test. Cada front tem a própria CI no seu repositório.
 
 ## Estrutura do Projeto
 
@@ -120,25 +122,18 @@ feedlens/
 │   │   ├── api.py                 # Endpoints REST de ingestão, leitura, correção e reanálise
 │   │   ├── settings_api.py        # Endpoints do cofre de provedores
 │   │   ├── health.py              # Probe /health
-│   │   ├── spa.py                 # Entrega do build Vue e deep-links
+│   │   ├── spa.py                 # Entrega do painel (release do feedlens-panel) e deep-links
 │   │   └── web.py                 # Compatibilidade das URLs antigas
 │   └── services/                  # Análise, estatísticas, e-mail, feedbacks e cofre
-├── frontend/                      # SPA Vue 3 + Vite + TypeScript
-│   ├── src/components/            # Logo, gráficos e componentes reutilizáveis
-│   ├── src/lib/                   # Cliente HTTP e utilitários
-│   ├── src/stores/                # Estado Pinia (feedbacks, provedores, sessão)
-│   ├── src/views/                 # Dashboard, feedbacks, provedores e login
-│   └── src/router/                # Rotas do painel e tela pública de login
-├── feedback-form/                 # Formulário público (Angular 22), projeto separado
-│   ├── public/config.json         # URL da API e modo demonstração, lidos em tempo de execução
-│   └── src/app/                   # core (envio, mocks), features (formulário, obrigado, demo)
 ├── evals/                         # Avaliação do prompt de classificação (casos e harness)
 ├── migrations/                    # Migrações de banco de dados (Alembic)
+├── scripts/
+│   └── fetch_panel.py             # Baixa o painel do release para app/static/spa (fora do Docker)
 ├── tests/                         # Suíte pytest do backend
-├── .github/workflows/ci.yml       # CI: backend, Postgres, painel, formulário e Docker
+├── .github/workflows/ci.yml       # CI: backend, Postgres e Docker
 ├── .env-example                   # Exemplo de variáveis de ambiente
 ├── docker-compose.yml             # Aplicação + PostgreSQL para rodar com Docker
-├── Dockerfile                     # Build multi-stage do front e da aplicação
+├── Dockerfile                     # Baixa o painel do release (com checksum) e monta a aplicação
 ├── gunicorn.conf.py               # Workers, threads e timeout do gunicorn
 ├── ARCHITECTURE.md                # Fluxos, decisões de arquitetura e segurança
 ├── README.md                      # Este arquivo
@@ -148,27 +143,19 @@ feedlens/
 └── wsgi.py                        # Entrada WSGI para produção
 ```
 
-O Flask serve o `frontend/dist` gerado pelo Vite em `app/static/spa/`. O painel é uma SPA: o navegador recebe o mesmo `index.html` na raiz e nos deep-links, e o Vue Router decide qual tela exibir. A API continua no Flask, sob `/api/...`.
+O Flask serve o painel já compilado a partir de `app/static/spa/`. O painel é uma SPA: o navegador recebe o mesmo `index.html` na raiz e nos deep-links, e o Vue Router decide qual tela exibir. A API continua no Flask, sob `/api/...`. O código do painel está no repositório [feedlens-panel](https://github.com/IannCarvalho/feedlens-panel); aqui entra só o build, baixado do release com versão e checksum fixos (veja [Painel (feedlens-panel)](#painel-feedlens-panel)).
 
-## Formulário público (`feedback-form`)
+## Formulário público (`feedlens-form`)
 
-O painel acima é para a equipe. O `feedback-form/` é um segundo front, **separado**, para o cliente final: uma tela só, onde ele escreve e envia o feedback. Não tem login, não mostra feedbacks de outras pessoas e não fala em termos técnicos.
+O painel é para a equipe. O formulário é um segundo front, **separado**, para o cliente final: uma tela só, onde ele escreve e envia o feedback. Não tem login, não mostra feedbacks de outras pessoas e não fala em termos técnicos. Ele vive no repositório [feedlens-form](https://github.com/IannCarvalho/feedlens-form) (Angular 22, com README, CI e Docker próprios) e é um site estático independente: este backend **não** o serve, então o cookie de sessão do painel nunca chega a ele.
 
-- **Stack:** Angular 22 (zoneless, Signal Forms), TypeScript e Vitest. Exige Node 24.15 ou superior.
-- **Separação:** projeto próprio (`package.json`, build, CI e deploy). O Flask **não** o serve, então o cookie de sessão do painel nunca chega a ele. Em produção, hospede o build (`feedback-form/dist/feedback-form/browser`) como site estático, de preferência em outro subdomínio.
+O que o backend precisa saber sobre ele:
+
 - **API:** usa só `POST /api/feedbacks` com `{ id, feedback }`. O `id` é um UUID gerado no navegador e reaproveitado nas tentativas: reenviar é seguro, e um `409` conta como "já recebemos". Um `GET /health` sem CORS acorda o servidor enquanto a pessoa escreve.
-- **Configuração em tempo de execução:** `public/config.json` (`apiBaseUrl`, `useMock`, `productName`), sem recompilar.
 - **CORS:** em produção, liste a origem do formulário em `CORS_ORIGINS`.
-- **Chave de ingestão (`INGEST_API_KEY`):** um site público não guarda segredo. Se a chave estiver ligada, o formulário recebe `401`. Para recebimento público, é preciso uma rota de ingestão sem segredo (origem permitida, limite próprio e teto de gasto). Isso é uma mudança de backend, fora deste front.
+- **Chave de ingestão (`INGEST_API_KEY`):** um site público não guarda segredo. Se a chave estiver ligada, o formulário recebe `401`. Para recebimento público, é preciso uma rota de ingestão sem segredo (origem permitida, limite próprio e teto de gasto). Isso é uma mudança de backend, fora do formulário.
 
-```powershell
-cd feedback-form
-npm ci
-npm start          # http://127.0.0.1:4200, em modo demonstração (dados mockados)
-npm run typecheck; npm run lint; npm test; npm run build
-```
-
-**Modo demonstração** (`"useMock": true`, o padrão do `config.json` do repositório): não usa servidor, **então nada é enviado de verdade e nada aparece no painel**. Um painel recolhido, que não existe com `useMock: false`, troca o cenário (envio normal, repetido, lento, muitos envios, instável, sem conexão, recusado), preenche exemplos e mostra o corpo que seria enviado. Também dá para abrir `?cenario=sem-conexao` na URL. Para usar a API real, troque o `config.json` por `{ "apiBaseUrl": "https://sua-api", "useMock": false, "productName": "Seu Produto" }` (veja [Rodando os dois fronts juntos](#rodando-os-dois-fronts-juntos)).
+Como rodar, configurar (`config.json` ou variáveis do Docker) e usar o modo demonstração: veja o [README do feedlens-form](https://github.com/IannCarvalho/feedlens-form/blob/main/README.md). Para enviar de verdade a este backend, veja [Rodando os três juntos](#rodando-os-três-juntos).
 
 ## Tecnologias Utilizadas
 
@@ -189,18 +176,15 @@ npm run typecheck; npm run lint; npm test; npm run build
   - [LiteLLM](https://docs.litellm.ai/): interface única para OpenAI, Anthropic, Google Gemini, Groq e OpenRouter (BYOK, fallback entre provedores)
   - Pydantic (validação da saída do modelo) e [nh3](https://nh3.readthedocs.io/) (sanitização do HTML gerado para o e-mail)
 
-- **Frontend:**
-  - Vue 3 com Composition API
-  - Vite e TypeScript
-  - PrimeVue e PrimeIcons (componentes e ícones)
-  - Pinia (estado), Vue Router (navegação) e Chart.js (gráficos)
-  - Formulário público: Angular 22 (zoneless, Signal Forms), em `feedback-form/`
+- **Frontend** (em repositórios próprios):
+  - Painel, em [feedlens-panel](https://github.com/IannCarvalho/feedlens-panel): Vue 3 (Composition API), Vite e TypeScript, PrimeVue e PrimeIcons, Pinia, Vue Router e Chart.js
+  - Formulário público, em [feedlens-form](https://github.com/IannCarvalho/feedlens-form): Angular 22 (zoneless, Signal Forms), servido por nginx
 
 - **Envio de E-mail:**
   - SMTP (via `smtplib` do Python)
 
 - **Qualidade:**
-  - pytest (backend), Ruff (lint), Vitest (formulário Angular), ESLint e vue-tsc (painel)
+  - pytest e Ruff (backend); cada front tem os próprios testes e lint no seu repositório
   - GitHub Actions e Docker
 
 - **Ambiente:**
@@ -211,7 +195,7 @@ npm run typecheck; npm run lint; npm test; npm run build
 ### Pré-requisitos
 
 - Python 3.10 ou superior
-- Node.js 24.15 ou superior, para compilar o painel (não é necessário com Docker)
+- Para o painel, **uma** destas opções: Docker (a imagem já o traz) ou o script `scripts/fetch_panel.py`, que baixa o build pronto (só Python). Node.js 24.15 ou superior é necessário apenas se você for alterar o próprio painel, no repositório feedlens-panel.
 - PostgreSQL ou outro banco de dados SQL (ou SQLite para desenvolvimento)
 - Chave de API de pelo menos um provedor de LLM (OpenAI, Anthropic, Google Gemini, Groq ou OpenRouter), no servidor ou enviada por requisição
 
@@ -292,14 +276,17 @@ flask db upgrade
 
 ### Executando a Aplicação
 
-O painel é um SPA Vue (em `frontend/`) que o Flask serve já compilado. Compile-o uma vez, e de novo sempre que mudar algo em `frontend/`:
+### Painel (feedlens-panel)
+
+O painel é um SPA Vue que o Flask serve já compilado. O código-fonte está no repositório [feedlens-panel](https://github.com/IannCarvalho/feedlens-panel); aqui você só instala o build de um release, com um comando (precisa só de Python e internet):
 
 ```bash
-npm --prefix frontend ci
-npm --prefix frontend run build
+python scripts/fetch_panel.py
 ```
 
-Sem esse build, a raiz do painel responde `503` com essa mesma instrução.
+O script usa a versão e o checksum fixados nas linhas `ARG PANEL_VERSION` e `ARG PANEL_SHA256` do `Dockerfile` (a mesma fonte da imagem Docker), recusa o arquivo se o checksum não bater e extrai em `app/static/spa/`. Sem o painel instalado, a raiz responde `503` com essa mesma instrução. Rode de novo quando a versão do `Dockerfile` mudar.
+
+Para atualizar o painel: publique uma tag no feedlens-panel e troque as duas linhas do `Dockerfile` pelos valores do release (o `.sha256` do release traz o checksum).
 
 Para iniciar a aplicação em modo de desenvolvimento:
 
@@ -314,20 +301,20 @@ A aplicação estará disponível em `http://localhost:5000`.
 Problemas comuns ao rodar localmente:
 
 - **`Connection refused` na porta 5432 no `flask db upgrade`:** o `DATABASE_URL` aponta para um PostgreSQL que não está rodando. Use o SQLite padrão do `.env-example`, ou suba só o banco do compose (`docker compose up -d db`) e use `postgresql://feedlens:feedlens@localhost:5432/feedlens`.
-- **A raiz responde `503`:** falta compilar o painel (`npm --prefix frontend ci` e depois `npm --prefix frontend run build`).
+- **A raiz responde `503`:** falta instalar o painel (`python scripts/fetch_panel.py`).
 - **`no such table` no log:** faltou aplicar as migrations (`flask db upgrade`).
 - **`Port 5000 is in use by another program`:** outro processo já usa a porta. Pare-o ou rode `flask run --port 5001`.
-- **O servidor continua com o código antigo depois de um `git pull`:** o Python só lê o código ao subir. Reinicie o `flask run`. O build do painel, ao contrário, o Flask lê do disco a cada acesso: basta recompilar e dar `Ctrl+F5` no navegador.
+- **O servidor continua com o código antigo depois de um `git pull`:** o Python só lê o código ao subir. Reinicie o `flask run`. O painel, ao contrário, o Flask lê do disco a cada acesso: depois de instalar outra versão, basta dar `Ctrl+F5` no navegador.
 
-Para desenvolver o painel com recarga instantânea, rode `npm --prefix frontend run dev` (porta 5173): o Vite encaminha `/api`, `/auth`, `/login`, `/logout` e `/health` para o Flask em `127.0.0.1:5000`, mantendo a mesma origem para o cookie de sessão.
+Para desenvolver o próprio painel com recarga instantânea, use o repositório [feedlens-panel](https://github.com/IannCarvalho/feedlens-panel): `npm run dev` (porta 5173) encaminha `/api`, `/auth`, `/login`, `/logout` e `/health` para este Flask em `127.0.0.1:5000`, mantendo a mesma origem para o cookie de sessão.
 
-### Rodando os dois fronts juntos
+### Rodando os três juntos
 
 A ordem importa (cada passo depende do anterior):
 
-1. **Backend e painel:** com o ambiente virtual ativo e o `.env` pronto, rode `flask db upgrade`, compile o painel (`npm --prefix frontend ci` e `npm --prefix frontend run build`) e suba `flask run`. O painel abre em `http://localhost:5000`.
+1. **Backend e painel:** com o ambiente virtual ativo e o `.env` pronto, rode `flask db upgrade`, `python scripts/fetch_panel.py` e `flask run`. O painel abre em `http://localhost:5000`.
 2. **Provedor de IA:** sem nenhuma chave o envio responde `503 llm_not_configured`. Ponha uma chave no `.env` ou, com `DASHBOARD_PASSWORD` e `FEEDLENS_ENCRYPTION_KEY` definidas, cadastre-a em **Provedores**. O botão de teste da tela confirma se a chave e o modelo existem na sua conta.
-3. **Formulário:** em outro terminal, `cd feedback-form`, `npm ci` e `npm start` (`http://127.0.0.1:4200`). Ele sobe em modo demonstração; para enviar de verdade, ponha `"useMock": false` no `public/config.json`, com `apiBaseUrl` em `http://127.0.0.1:5000`. Não commite essa alteração: o padrão do repositório precisa continuar `true`.
+3. **Formulário:** clone o [feedlens-form](https://github.com/IannCarvalho/feedlens-form), rode `npm ci` e `npm start` (`http://127.0.0.1:4200`). Ele sobe em modo demonstração; para enviar de verdade, ponha `"useMock": false` no `public/config.json` dele (o `apiBaseUrl` já aponta para `http://127.0.0.1:5000`). Não commite essa alteração: o padrão do repositório precisa continuar `true`.
 4. **Conferir:** envie um texto que pareça feedback sobre um produto ou serviço e abra **Feedbacks** no painel.
 
 Se o feedback enviado não aparece no painel, as causas mais comuns são:
@@ -374,7 +361,7 @@ A API (`/api/...`) **não** é afetada por essa autenticação de formulário: o
 
 ### Executando com Docker
 
-O projeto inclui um `Dockerfile` (gunicorn servindo `wsgi:app`) e um `docker-compose.yml` que sobe a aplicação junto de um PostgreSQL. A imagem compila o painel num estágio Node à parte (build multi-stage), então o host não precisa de Node, e só o resultado estático vai para a imagem final. O job `docker` do CI builda a imagem e confere que ela serve o painel.
+O projeto inclui um `Dockerfile` (gunicorn servindo `wsgi:app`) e um `docker-compose.yml` que sobe a aplicação junto de um PostgreSQL. A imagem baixa o painel já compilado do release do feedlens-panel (estágio à parte, com checksum conferido: o build falha se não bater), então o host não precisa de Node, e só o resultado estático vai para a imagem final. Isso exige Docker 23 ou superior (BuildKit) e acesso a `github.com` durante o build. O job `docker` do CI builda a imagem e confere que ela serve o painel.
 
 O compose exige uma `SECRET_KEY` aleatória (32+ caracteres) e falha logo no `up` sem ela; defina-a no `.env` ou no shell (ex.: `$env:SECRET_KEY = python -c "import secrets; print(secrets.token_urlsafe(48))"` no PowerShell). Como ele serve HTTP em `localhost`, o compose desliga o cookie `Secure` por padrão (`SESSION_COOKIE_SECURE=false`).
 
@@ -595,7 +582,7 @@ Os casos (`evals/cases.py`) cobrem elogios e críticas curtos, ironia, perguntas
 
 ## Interface Web
 
-O painel é uma SPA Vue 3 servida pelo Flask na raiz. A navegação acontece no Vue Router, e um reload em qualquer deep-link continua funcionando porque o Flask entrega o `index.html` do build. A interface usa PrimeVue, PrimeIcons, Pinia e Chart.js.
+O painel é uma SPA Vue 3 servida pelo Flask na raiz. A navegação acontece no Vue Router, e um reload em qualquer deep-link continua funcionando porque o Flask entrega o `index.html` do painel instalado. A interface usa PrimeVue, PrimeIcons, Pinia e Chart.js.
 
 ### Rotas do painel
 
@@ -641,27 +628,15 @@ pytest tests
 
 O `pytest.ini` já aponta para `tests/` e põe a raiz no `sys.path`. A suíte não faz chamadas reais a provedores de LLM, então não gasta cota nem precisa de chave. Ela cobre a API (ingestão, leitura, correção e reanálise), autenticação e CSRF, o cofre de chaves, a cadeia de provedores, o contrato do prompt, as estatísticas, o SPA e as migrations. As migrations também rodam num PostgreSQL de verdade no CI (`flask db upgrade`, `flask db check`, `flask db downgrade base`), porque o SQLite dos testes não pega estouro de `VARCHAR`, chave estrangeira nem `timestamptz`.
 
-Fronts (em `frontend/` e em `feedback-form/`):
+Os fronts têm testes e CI nos próprios repositórios: [feedlens-panel](https://github.com/IannCarvalho/feedlens-panel) (typecheck, lint e build; sem testes automatizados de componente) e [feedlens-form](https://github.com/IannCarvalho/feedlens-form) (typecheck, lint, Vitest, build com orçamento de bundle e a imagem Docker). Aqui, os testes do painel ficam no contrato: `tests/test_spa.py` (entrega e deep-links) e `tests/test_panel_pin.py` (pin e script de download).
 
-```bash
-npm ci
-npm run typecheck
-npm run lint
-npm run build
-npm test            # só no feedback-form (Vitest)
-```
-
-O painel Vue é validado por typecheck, lint e build; ele ainda não tem testes automatizados de componente.
-
-O workflow [`ci.yml`](.github/workflows/ci.yml) roda em todo push e PR para a `main`, com cinco jobs:
+O workflow [`ci.yml`](.github/workflows/ci.yml) roda em todo push e PR para a `main`, com três jobs:
 
 | Job | O que valida |
 |---|---|
 | `test` | Ruff e pytest em Python 3.10 e 3.11 |
 | `postgres` | Migrations (subir, checar, descer) e pytest num PostgreSQL 16 |
-| `frontend` | Typecheck, ESLint e build do painel Vue |
-| `feedback-form` | Typecheck, ESLint, Vitest e build (com orçamento de bundle) do formulário Angular |
-| `docker` | Build da imagem e smoke test: `/health`, o `index.html` do painel e um asset JS |
+| `docker` | Build da imagem (baixa o painel do release e confere o checksum) e smoke test: `/health`, o `index.html` do painel e um asset JS |
 
 ## Considerações de Desenvolvimento
 
@@ -715,7 +690,7 @@ Cuidados de segurança:
 
 - análise por sentimento, spam e funcionalidades pedidas, com cinco provedores de LLM (OpenAI, Anthropic, Gemini, Groq e OpenRouter) e fallback entre eles;
 - BYOK por requisição e cofre de chaves cifrado, com cadastro, edição de modelo e chave, teste, ordem e remoção pelo painel;
-- painel Vue 3 com login por senha e CSRF, e formulário público em Angular;
+- painel Vue 3 com login por senha e CSRF e formulário público em Angular, cada um em seu repositório (feedlens-panel e feedlens-form), com o painel embutido na imagem por release e checksum;
 - revisão humana: filtro de spam, correção de spam e de sentimento;
 - feedbacks "não analisados" identificáveis e reprocessáveis (painel e `flask reanalyze-pending`);
 - rate limiting nos endpoints públicos, chave de ingestão opcional e CORS configurável;
