@@ -16,7 +16,12 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 from app import db, scheduler as app_scheduler, validate_config
 from app.config import Config
-from app.models.feedback import Feedback, RequestedFeature
+from app.models.feedback import (
+    ANALYSIS_ANALYZED,
+    ANALYSIS_UNANALYZED,
+    Feedback,
+    RequestedFeature,
+)
 from app.scheduling import JOB_ID, run_weekly_summary, schedule_weekly_summary
 from app.services import email_service
 
@@ -37,11 +42,13 @@ def email_config():
         yield
 
 
-def _add_feedback(sentiment, *, spam=False, days_ago=1, features=()):
+def _add_feedback(sentiment, *, spam=False, days_ago=1, features=(),
+                  analysis_status=ANALYSIS_ANALYZED):
     feedback = Feedback(
         feedback_text="texto",
         sentiment=sentiment,
         is_spam=spam,
+        analysis_status=analysis_status,
         created_at=datetime.now(timezone.utc) - timedelta(days=days_ago),
     )
     for code, reason in features:
@@ -141,6 +148,61 @@ def test_weekly_summary_empty_week(app):
     stats = email_service.generate_weekly_summary()
     assert stats["total_feedbacks"] == 0
     assert stats["positive_count"] == 0
+    assert stats["top_features"] == []
+
+
+def test_weekly_summary_skips_unanalyzed_like_the_dashboard(app):
+    """Feedbacks que a IA não analisou não entram nos números do resumo.
+
+    O sentimento deles é só o valor padrão (INCONCLUSIVO), não uma opinião; o
+    resumo usa o mesmo critério do dashboard e os deixa de fora, em vez de
+    contá-los como Inconclusivos.
+    """
+    _add_feedback("POSITIVO", features=[("EDITAR_PERFIL", "editar o perfil")])
+    _add_feedback("NEGATIVO")
+    # Não analisados: sentimento só padrão. A feature deles também fica fora.
+    _add_feedback("INCONCLUSIVO", analysis_status=ANALYSIS_UNANALYZED,
+                  features=[("FANTASMA", "nao analisado")])
+    _add_feedback("INCONCLUSIVO", analysis_status=ANALYSIS_UNANALYZED)
+    db.session.commit()
+
+    stats = email_service.generate_weekly_summary()
+
+    assert stats["total_feedbacks"] == 2
+    assert stats["positive_count"] == 1
+    assert stats["negative_count"] == 1
+    assert stats["positive_percentage"] == pytest.approx(50.0)
+    assert stats["negative_percentage"] == pytest.approx(50.0)
+    assert [f["code"] for f in stats["top_features"]] == ["EDITAR_PERFIL"]
+    assert "FANTASMA" not in {f["code"] for f in stats["top_features"]}
+
+
+def test_weekly_summary_keeps_analyzed_inconclusive(app):
+    """Um Inconclusivo DE VERDADE (analisado) continua contando.
+
+    A exclusão é por ``analysis_status``, não pelo sentimento: a IA pode ter
+    analisado e concluído que o feedback é inconclusivo, e isso é uma opinião.
+    """
+    _add_feedback("POSITIVO")
+    _add_feedback("INCONCLUSIVO", analysis_status=ANALYSIS_ANALYZED)
+    db.session.commit()
+
+    stats = email_service.generate_weekly_summary()
+
+    assert stats["total_feedbacks"] == 2
+    assert stats["positive_count"] == 1
+    assert stats["negative_count"] == 0
+
+
+def test_weekly_summary_all_unanalyzed_is_an_empty_week(app):
+    """Só não analisados = semana vazia, não um e-mail cheio de Inconclusivos."""
+    _add_feedback("INCONCLUSIVO", analysis_status=ANALYSIS_UNANALYZED)
+    _add_feedback("INCONCLUSIVO", analysis_status=ANALYSIS_UNANALYZED)
+    db.session.commit()
+
+    stats = email_service.generate_weekly_summary()
+
+    assert stats["total_feedbacks"] == 0
     assert stats["top_features"] == []
 
 
