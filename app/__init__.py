@@ -97,6 +97,44 @@ def validate_config(config: Type[Config]) -> None:
             'INGEST_API_KEY não está definida e há chave de LLM no servidor: '
             'POST /api/feedbacks está aberto e qualquer um gasta a sua cota.')
 
+    # Ingestão pública (opt-in): origens exatas. '*' não faz sentido aqui —
+    # seria aceitar qualquer site sem chave — e é recusado no boot.
+    public_origins = config.INGEST_PUBLIC_ORIGINS
+    if '*' in public_origins:
+        raise ValueError(
+            "INGEST_PUBLIC_ORIGINS não aceita '*': liste as origens EXATAS "
+            '(ex.: https://form.exemplo.com). O curinga aceitaria qualquer '
+            'site enviando sem chave e esvaziaria o teto de gasto.')
+    if public_origins:
+        from app.ingest_auth import normalize_origin
+        cors_origins = config.CORS_ORIGINS
+        cors_wildcard = '*' in cors_origins
+        cors_normalized = {normalize_origin(o) for o in cors_origins}
+        logger.warning(
+            'Ingestão pública LIGADA para %d origem(ns): o POST /api/feedbacks '
+            'aceita envios sem chave dessas origens, sob rate limit (%s) e teto '
+            'diário (%d). O header Origin é forjável fora do navegador e NÃO '
+            'autentica — configure um alerta de gasto no provedor de LLM.',
+            len(public_origins), config.RATELIMIT_INGEST_PUBLIC,
+            config.INGEST_PUBLIC_DAILY_CAP)
+        for origin in public_origins:
+            invalid = not normalize_origin(origin)
+            if invalid:
+                logger.warning(
+                    "INGEST_PUBLIC_ORIGINS tem uma entrada inválida (%r): use só "
+                    'esquema+host+porta, sem caminho. Ela será ignorada.', origin)
+                continue
+            if cors_wildcard:
+                logger.warning(
+                    "CORS_ORIGINS é '*': o navegador do formulário consegue ler a "
+                    'resposta, mas prefira listar a origem pública exata em '
+                    'CORS_ORIGINS em produção.')
+            elif normalize_origin(origin) not in cors_normalized:
+                logger.warning(
+                    'Origem pública %r não está em CORS_ORIGINS: o navegador vai '
+                    'bloquear a resposta por CORS. Adicione-a a CORS_ORIGINS.',
+                    origin)
+
 
 def init_extensions(app: Flask) -> None:
     """

@@ -11,6 +11,15 @@ chamar qualquer provedor (nada é gasto nem gravado por quem não tem chave).
   ingestão, quem trouxer a própria chave de LLM nos headers ``X-LLM-*`` (e
   nesse caso a chave do servidor nunca é usada, veja ``app.llm.credentials``).
 
+Ingestão pública (opt-in, ``INGEST_PUBLIC_ORIGINS``): quando ligada, um POST
+sem ``X-API-Key`` é aceito se o header ``Origin`` bater EXATAMENTE com uma das
+origens listadas. O ``Origin`` é forjável fora de um navegador, então isto NÃO
+é autenticação — só barra o uso a partir de páginas de outros sites. As
+barreiras reais contra gasto de LLM ficam em ``app.routes.api``: rate limit por
+IP (``RATELIMIT_INGEST_PUBLIC``) e um teto diário global
+(``INGEST_PUBLIC_DAILY_CAP``). Uma requisição com ``X-API-Key`` válida ignora
+tudo isso e segue o contrato normal.
+
 Os GET de leitura têm a regra própria ``API_READ_TOKEN`` (``app.auth``).
 """
 from functools import wraps
@@ -44,6 +53,69 @@ def _brings_own_llm_key() -> bool:
                 and request.headers.get(HEADER_API_KEY, '').strip())
 
 
+def normalize_origin(origin: str) -> str:
+    """Normaliza uma origem para comparação exata.
+
+    Uma origem é só esquema + host + porta (ex.: ``https://form.exemplo.com``).
+    Remove espaços e barra(s) finais; ``https://form.exemplo.com/`` e
+    ``https://form.exemplo.com`` viram a mesma coisa. Uma entrada com caminho
+    (``https://form.exemplo.com/enviar``) é recusada devolvendo ``''``, porque
+    o header ``Origin`` do navegador nunca traz caminho e aceitá-la abriria uma
+    comparação que nunca bate (ou, pior, uma que bate por engano).
+    """
+    if not origin:
+        return ''
+    cleaned = origin.strip().rstrip('/')
+    if not cleaned:
+        return ''
+    # Sem esquema não é uma origem; com caminho/query/fragmento também não.
+    if '://' not in cleaned:
+        return ''
+    scheme, _, rest = cleaned.partition('://')
+    if not scheme or not rest or any(c in rest for c in '/?#'):
+        return ''
+    return cleaned
+
+
+def configured_public_origins() -> list[str]:
+    """Origens públicas normalizadas; entradas inválidas são descartadas."""
+    raw = current_app.config.get('INGEST_PUBLIC_ORIGINS') or []
+    return [n for n in (normalize_origin(o) for o in raw) if n]
+
+
+def public_ingest_enabled() -> bool:
+    return bool(configured_public_origins())
+
+
+def request_origin_allowed() -> bool:
+    """True se o header ``Origin`` da requisição está na lista pública."""
+    if not public_ingest_enabled():
+        return False
+    origin = normalize_origin(request.headers.get('Origin', ''))
+    return bool(origin) and origin in configured_public_origins()
+
+
+def has_valid_ingest_key() -> bool:
+    """True se a requisição traz uma ``X-API-Key`` válida (chave configurada)."""
+    return bool(configured_ingest_keys()) and _valid_ingest_key(
+        request.headers.get(HEADER_INGEST_KEY, ''))
+
+
+def is_public_ingest() -> bool:
+    """True quando esta requisição passa pelo caminho PÚBLICO (sem chave).
+
+    Ou seja: a ingestão pública está ligada, o ``Origin`` é permitido e NÃO há
+    chave de ingestão válida nem BYOK que já a autorizaria. É o caminho que
+    responde pelos limites estritos (rate limit próprio + teto diário).
+    """
+    if has_valid_ingest_key():
+        return False
+    if _brings_own_llm_key() and current_app.config.get('INGEST_ALLOW_BYOK_WITHOUT_KEY') \
+            and current_app.config.get('BYOK_REQUEST_KEYS_ENABLED', True):
+        return False
+    return request_origin_allowed()
+
+
 def ingest_authorized() -> bool:
     """True se esta requisição pode usar a ingestão."""
     if not configured_ingest_keys():
@@ -51,11 +123,13 @@ def ingest_authorized() -> bool:
     if _valid_ingest_key(request.headers.get(HEADER_INGEST_KEY, '')):
         return True
     config = current_app.config
-    return bool(
-        config.get('INGEST_ALLOW_BYOK_WITHOUT_KEY')
-        and config.get('BYOK_REQUEST_KEYS_ENABLED', True)
-        and _brings_own_llm_key()
-    )
+    if (config.get('INGEST_ALLOW_BYOK_WITHOUT_KEY')
+            and config.get('BYOK_REQUEST_KEYS_ENABLED', True)
+            and _brings_own_llm_key()):
+        return True
+    # Caminho público opt-in: Origin permitido vale por si, sob limites estritos
+    # aplicados na rota (rate limit próprio + teto diário). Origin NÃO é senha.
+    return request_origin_allowed()
 
 
 def ingest_key_required(view):

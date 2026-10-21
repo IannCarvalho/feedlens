@@ -155,7 +155,7 @@ O que o backend precisa saber sobre ele:
 
 - **API:** usa só `POST /api/feedbacks` com `{ id, feedback }`. O `id` é um UUID gerado no navegador e reaproveitado nas tentativas: reenviar é seguro, e um `409` conta como "já recebemos". Um `GET /health` sem CORS acorda o servidor enquanto a pessoa escreve.
 - **CORS:** em produção, liste a origem do formulário em `CORS_ORIGINS`.
-- **Chave de ingestão (`INGEST_API_KEY`):** um site público não guarda segredo. Se a chave estiver ligada, o formulário recebe `401`. Para recebimento público, é preciso uma rota de ingestão sem segredo (origem permitida, limite próprio e teto de gasto). Isso é uma mudança de backend, fora do formulário.
+- **Chave de ingestão (`INGEST_API_KEY`):** um site público não guarda segredo. Se a chave estiver ligada e você **não** abrir a ingestão pública, o formulário recebe `401`. Há dois caminhos para o envio público: receber no seu backend e reenviar com a chave, ou ligar a **ingestão pública** (`INGEST_PUBLIC_ORIGINS`), que aceita envios sem chave a partir das origens que você listar, sob rate limit próprio e teto diário de gasto. Veja [Enviar Feedback](#enviar-feedback).
 
 Como rodar, configurar (`config.json` ou variáveis do Docker) e usar o modo demonstração: veja o [README do feedlens-form](https://github.com/IannCarvalho/feedlens-form/blob/main/README.md). Para enviar de verdade a este backend, veja [Rodando os três juntos](#rodando-os-três-juntos).
 
@@ -397,6 +397,13 @@ docker compose exec web flask db upgrade
 - Para **rotacionar** sem downtime, liste duas separadas por vírgula (`INGEST_API_KEY=nova,antiga`), troque os clientes e remova a antiga.
 - Use a chave de **servidor para servidor**. Não a embuta no JavaScript de um site público: quem abre o site a lê. Para um formulário público, receba no seu backend e reenvie com a chave.
 - `INGEST_ALLOW_BYOK_WITHOUT_KEY=true` (padrão `false`) abre uma exceção para demos: quem trouxer a **própria** chave de LLM (`X-LLM-Provider` + `X-LLM-Api-Key`) é aceito sem chave de ingestão e paga a chamada, nunca a do servidor. O feedback ainda é gravado no seu banco.
+
+**Ingestão pública (opt-in, para o formulário Angular):** com `INGEST_PUBLIC_ORIGINS` definida (origens exatas separadas por vírgula, ex.: `https://form.exemplo.com`), um `POST` **sem** `X-API-Key` é aceito quando o header `Origin` bate exatamente com uma das origens listadas. Pensado para o [feedlens-form](https://github.com/IannCarvalho/feedlens-form), que não pode guardar segredo. Desligada por padrão: sem essa variável, o comportamento é exatamente o de hoje.
+
+- **O `Origin` NÃO é autenticação.** Ele é definido pelo navegador, mas qualquer cliente fora de um navegador (curl, script) pode forjá-lo. A lista de origens só impede o uso a partir de páginas de **outros** sites; ela não prova quem está enviando. As barreiras reais contra gasto de LLM são as duas abaixo — e recomenda-se configurar um **alerta de gasto** no painel do provedor de LLM.
+- **Rate limit por IP** (`RATELIMIT_INGEST_PUBLIC`, padrão `5 per minute`), aplicado só ao caminho público; uma requisição com chave válida segue apenas o `RATELIMIT_INGEST`.
+- **Teto diário global** (`INGEST_PUBLIC_DAILY_CAP`, padrão `500`): soma de feedbacks gravados nas últimas 24h. Estourado, o endpoint responde `429` com `code: public_ingest_cap` **antes** de ler o corpo ou chamar a IA (nada é gasto). Uma `X-API-Key` válida **ignora** o teto e o rate limit público.
+- Sem `Origin` permitido e sem chave: `401 ingest_key_required`, como antes. Uma origem com caminho (`.../enviar`) ou curinga é inválida; `INGEST_PUBLIC_ORIGINS='*'` é **recusado no boot**. Liste cada origem pública também em `CORS_ORIGINS`, senão o navegador bloqueia a resposta (o boot avisa no log).
 
 **Corpo da Requisição:**
 ```json
@@ -704,7 +711,7 @@ Cuidados de segurança:
 **Limitações conhecidas** (veja também o [ARCHITECTURE.md](ARCHITECTURE.md#6-limitações-conhecidas-e-evolução)):
 
 - **A análise é síncrona:** o `POST /api/feedbacks` espera a IA responder. Com o provedor lento, quem envia espera (o formulário avisa "Ainda enviando..."). Gravar na hora e analisar depois é a evolução natural.
-- **Formulário público e chave de ingestão:** um site público não guarda segredo, então com `INGEST_API_KEY` ligada o formulário recebe `401`. Receber pelo seu backend e reenviar com a chave é o caminho hoje.
+- **Formulário público e chave de ingestão:** um site público não guarda segredo, então com `INGEST_API_KEY` ligada o formulário recebe `401`. Há dois caminhos: receber pelo seu backend e reenviar com a chave, ou ligar a **ingestão pública** (`INGEST_PUBLIC_ORIGINS`), que aceita envios sem chave das origens listadas sob rate limit próprio e teto diário. Como o `Origin` é forjável fora de um navegador, isso não autentica ninguém — a proteção é o limite de taxa e o teto de gasto.
 - **Sem histórico de correções:** a troca manual de sentimento ou de spam fica só numa linha do log do servidor; não há registro de quem corrigiu o quê.
 - **O resumo semanal ainda conta os "não analisados"** como Inconclusivos: as consultas do e-mail ignoram spam, mas não o estado da análise, diferente do dashboard.
 - **Reanálise em lote só pela linha de comando:** o painel reanalisa um feedback por vez.
