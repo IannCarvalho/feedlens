@@ -1,17 +1,24 @@
-# Estágio 1: compila o front Vue (Vite). Só o resultado estático segue para a
-# imagem final; Node e node_modules ficam neste estágio.
-# Node 24 (>= 24.15, o mínimo do painel), a mesma linha do job "frontend" do CI.
-FROM node:24-slim AS frontend
+# Versão do painel (Vue) embutida na imagem. O painel vive no repositório
+# IannCarvalho/feedlens-panel e é publicado como release (tarball + sha256).
+# Para atualizar: troque as DUAS linhas abaixo pelos valores do release novo
+# (o .sha256 do release traz o checksum) ou deixe o workflow panel-bump.yml
+# abrir o PR. O build FALHA se o checksum não bater com o arquivo baixado.
+ARG PANEL_VERSION=0.1.0
+ARG PANEL_SHA256=fb5f3f40b5e6b67e46f963f713fa08d4c9a367c19effd50cb74d3380a6a7b71b
 
-WORKDIR /build/frontend
 
-# Dependências primeiro, para aproveitar o cache de camadas
-COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci
+# Estágio 1: baixa o painel já compilado, confere o checksum e extrai.
+# ADD --checksum exige BuildKit (Docker 23 ou superior, o padrão atual).
+FROM alpine:3.21 AS panel
 
-# O vite.config.ts grava o build em ../app/static/spa (aqui, /build/app/static/spa)
-COPY frontend/ ./
-RUN npm run build
+ARG PANEL_VERSION
+ARG PANEL_SHA256
+
+ADD --checksum=sha256:${PANEL_SHA256} \
+    https://github.com/IannCarvalho/feedlens-panel/releases/download/v${PANEL_VERSION}/feedlens-panel-v${PANEL_VERSION}.tgz \
+    /tmp/panel.tgz
+
+RUN mkdir /spa && tar -xzf /tmp/panel.tgz -C /spa
 
 
 # Estágio 2: a aplicação Python
@@ -35,9 +42,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copia o restante da aplicação
 COPY . .
 
-# O painel (SPA) é gerado, não comitado: vem do estágio 1. Sem ele, a raiz
-# do painel responde 503 ("o front ainda não foi compilado").
-COPY --from=frontend /build/app/static/spa ./app/static/spa
+# O painel (SPA) não é comitado aqui: vem do release do estágio 1. Sem ele, a
+# raiz do painel responde 503 ("o painel ainda não foi instalado").
+COPY --from=panel /spa ./app/static/spa
 
 EXPOSE 5000
 

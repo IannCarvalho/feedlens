@@ -12,11 +12,11 @@ Windows ao remover o arquivo depois).
 
 
 def test_spa_503_when_not_built(client, app, tmp_path):
-    """Sem o build do front, a raiz responde 503 explicando como gerar."""
+    """Sem o painel instalado, a raiz responde 503 explicando como instalar."""
     app.static_folder = str(tmp_path)  # pasta vazia: nenhum spa/index.html
     resp = client.get('/')
     assert resp.status_code == 503
-    assert b'front' in resp.data.lower() or b'vite' in resp.data.lower()
+    assert b'fetch_panel' in resp.data
 
 
 def test_spa_serves_index_at_root_and_deeplinks(client, app, tmp_path):

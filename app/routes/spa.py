@@ -10,7 +10,9 @@ A tela de login também é do SPA, mas é a única rota PÚBLICA dele: quem a
 entrega é ``GET /login`` (``app/auth.py``), via ``serve_index``. As demais
 exigem sessão (``login_required``).
 
-Se o build ainda não existe (``vite build`` não rodou), o painel responde um
+Se o painel ainda não foi instalado em ``app/static/spa`` (no Docker ele vem do
+release do feedlens-panel; fora dele, ``python scripts/fetch_panel.py``), o painel
+responde um
 aviso claro (503) em vez de 404, para não confundir com rota inexistente.
 
 O catch-all entrega o ``index.html`` para qualquer caminho de navegação que
@@ -42,8 +44,9 @@ def serve_index():
         abort(
             503,
             description=(
-                'O front ainda não foi compilado. Rode "npm --prefix frontend '
-                'ci && npm --prefix frontend run build" para gerar app/static/spa.'
+                'O painel ainda não foi instalado. Rode '
+                '"python scripts/fetch_panel.py" para baixar o release do painel '
+                'em app/static/spa (ou compile o repositório feedlens-panel).'
             ),
         )
     return send_from_directory(_spa_dir(), 'index.html')
