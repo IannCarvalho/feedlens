@@ -1024,6 +1024,14 @@ components:
           $ref: '#/components/schemas/SentimentCounts'
         sentiment_percentages:
           type: object
+          required: [POSITIVO, NEGATIVO, INCONCLUSIVO]
+          properties:
+            POSITIVO:
+              type: number
+            NEGATIVO:
+              type: number
+            INCONCLUSIVO:
+              type: number
           additionalProperties:
             type: number
         top_features:
@@ -1038,6 +1046,7 @@ components:
 
     SentimentCounts:
       type: object
+      required: [POSITIVO, NEGATIVO, INCONCLUSIVO]
       properties:
         POSITIVO:
           type: integer
@@ -1049,7 +1058,7 @@ components:
 
     FeatureStat:
       type: object
-      required: [code, count]
+      required: [code, count, percentage]
       properties:
         code:
           type: string
