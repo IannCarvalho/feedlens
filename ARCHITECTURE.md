@@ -40,10 +40,16 @@ API e, de quebra, o painel já compilado, que a imagem Docker baixa de um releas
 - **Formulário → backend, em tempo de execução.** O formulário é um site estático
   que só conhece `POST /api/feedbacks` e `GET /health`; o endereço da API vem do
   `config.json`.
-- **O contrato é a API.** Hoje ele é mantido à mão, dos dois lados: `src/types/api.ts`
-  no painel espelha as respostas de `app/routes/api.py`, e o formulário traduz os
-  status HTTP em `http-feedback.gateway.ts`. Uma mudança que quebre uma resposta
-  exige PR nos dois repositórios.
+- **O contrato é a API, agora descrito em `openapi.yaml`.** A raiz do repositório
+  tem um `openapi.yaml` (OpenAPI 3.1) com as rotas que os clientes consomem — a
+  ingestão `POST /api/feedbacks` e tudo que o painel usa — e `tests/test_openapi_contract.py`
+  prova que ele não mente: valida a própria spec e, para cada endpoint coberto,
+  chama a API real (test client, LLM mockada) e confere corpo e status contra o
+  esquema; uma rota coberta que suma ou mude de forma quebra o teste. Os tipos do
+  painel (`src/types/api.ts`) e a tradução de status do formulário
+  (`http-feedback.gateway.ts`) ainda são mantidos à mão, do outro lado da fronteira
+  — gerá-los a partir do `openapi.yaml` fica para um PR futuro. Uma mudança que
+  quebre uma resposta continua exigindo PR nos dois repositórios.
 - **Funcionalidade que cruza API e tela:** PR no backend primeiro, compatível com o
   painel que está no ar → merge → PR no painel → tag → PR aqui subindo
   `PANEL_VERSION`. Remover algo da API só depois de o painel novo estar publicado.

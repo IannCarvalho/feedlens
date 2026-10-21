@@ -1,2 +1,8 @@
 -r requirements.txt
 pytest==8.3.3
+# Teste de contrato (tests/test_openapi_contract.py): valida openapi.yaml e
+# confere as respostas reais contra o esquema da spec.
+openapi-spec-validator==0.9.0
+jsonschema==4.26.0
+referencing==0.37.0
+PyYAML==6.0.3

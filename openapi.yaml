@@ -1,0 +1,1246 @@
+openapi: 3.1.0
+info:
+  title: FeedLens API
+  version: "1.0.0"
+  description: >
+    Contrato das rotas que os clientes do FeedLens consomem: o formulario
+    publico de ingestao (POST /api/feedbacks) e o painel Vue (feedlens-panel).
+    Fonte unica verificada pelo teste de contrato em
+    tests/test_openapi_contract.py. So descreve o que algum cliente usa hoje;
+    rotas internas (SPA estatica, paginas web) ficam de fora de proposito.
+
+servers:
+  - url: /
+    description: Mesma origem do painel (o Flask serve o SPA).
+
+tags:
+  - name: ingest
+    description: Ingestao de feedback pelo formulario publico.
+  - name: feedbacks
+    description: Leitura e revisao de feedbacks pelo painel.
+  - name: stats
+    description: Estatisticas do dashboard.
+  - name: session
+    description: Sessao, login e CSRF do painel.
+  - name: providers
+    description: Cofre de chaves de provedor (BYOK do operador).
+  - name: health
+    description: Health check para orquestradores.
+
+paths:
+  /api/feedbacks:
+    post:
+      tags: [ingest]
+      summary: Recebe e analisa um feedback.
+      description: >
+        Formulario publico. A autorizacao segue app/ingest_auth.py: sem
+        INGEST_API_KEY o endpoint e aberto; com ela exige X-API-Key; o modo
+        publico opt-in aceita um Origin permitido sob limites estritos; BYOK
+        por requisicao usa X-LLM-Provider + X-LLM-Api-Key.
+      security:
+        - {}
+        - ingestApiKey: []
+        - byokHeaders: []
+      parameters:
+        - $ref: '#/components/parameters/XApiKey'
+        - $ref: '#/components/parameters/XLlmProvider'
+        - $ref: '#/components/parameters/XLlmApiKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeedbackIngestRequest'
+      responses:
+        '201':
+          description: Feedback recebido (analisado, ou gravado como nao analisado).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedbackIngestResult'
+        '400':
+          description: Corpo invalido (JSON malformado, campos ausentes, id nao-UUID, texto vazio ou longo demais).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Chave de ingestao exigida e ausente/invalida.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Ja existe um feedback com esse id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: BYOK recusado pelo provedor, ou headers BYOK invalidos.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate limit ou teto diario da ingestao publica.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: O provedor BYOK falhou com a credencial enviada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Nenhum provedor de LLM configurado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    get:
+      tags: [feedbacks]
+      summary: Lista feedbacks analisados (mais novos primeiro).
+      security:
+        - {}
+        - sessionCookie: []
+        - bearerToken: []
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+        - $ref: '#/components/parameters/SentimentFilter'
+        - $ref: '#/components/parameters/SpamFilter'
+        - $ref: '#/components/parameters/AnalysisFilter'
+      responses:
+        '200':
+          description: Pagina de feedbacks.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedbackListResponse'
+        '400':
+          description: Parametro de query invalido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Autenticacao necessaria para ler os feedbacks.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/feedbacks/{feedback_id}:
+    parameters:
+      - $ref: '#/components/parameters/FeedbackId'
+    get:
+      tags: [feedbacks]
+      summary: Busca um feedback pelo id.
+      security:
+        - {}
+        - sessionCookie: []
+        - bearerToken: []
+      responses:
+        '200':
+          description: O feedback pedido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Feedback'
+        '400':
+          description: id malformado (nao e UUID).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Autenticacao necessaria.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Feedback nao encontrado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    patch:
+      tags: [feedbacks]
+      summary: Revisao humana da analise (is_spam e/ou sentiment).
+      description: >
+        Sessao do painel + CSRF. Nao aceita API_READ_TOKEN: corrigir a analise
+        e acao de quem opera o painel.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/XCsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeedbackReviewRequest'
+      responses:
+        '200':
+          description: Feedback atualizado (ou inalterado, se repetir o mesmo valor).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Feedback'
+        '400':
+          description: id malformado, corpo nao-objeto, ou nenhum/ invalido campo revisavel.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Nao autenticado no painel.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: DASHBOARD_PASSWORD ausente (auth_not_configured) ou CSRF invalido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Feedback nao encontrado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/feedbacks/{feedback_id}/reanalyze:
+    parameters:
+      - $ref: '#/components/parameters/FeedbackId'
+    post:
+      tags: [feedbacks]
+      summary: Roda a IA de novo num feedback (cadeia de provedores do servidor).
+      description: Sessao do painel + CSRF. Sincrono; espera a resposta da IA.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/XCsrfToken'
+      responses:
+        '200':
+          description: Feedback reanalisado e atualizado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Feedback'
+        '400':
+          description: id malformado (nao e UUID).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Nao autenticado no painel.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: DASHBOARD_PASSWORD ausente ou CSRF invalido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Feedback nao encontrado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: >
+            A IA nao respondeu de novo (analysis_unavailable, com o motivo em
+            detail e o feedback em feedback), ou nenhum provedor configurado
+            (llm_not_configured).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReanalyzeUnavailableError'
+
+  /api/feedbacks/reanalyze-pending:
+    post:
+      tags: [feedbacks]
+      summary: Reanalisa em lote os feedbacks que a IA nao conseguiu analisar.
+      description: >
+        Sessao do painel + CSRF. Corpo opcional {"limit": int} (1..10, padrao
+        5). Cada feedback do lote e uma chamada paga; para no primeiro erro de
+        provedor.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/XCsrfToken'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReanalyzePendingRequest'
+      responses:
+        '200':
+          description: Resultado do lote.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReanalyzePendingResponse'
+        '400':
+          description: Corpo nao-objeto, ou limit fora de 1..10 (invalid_limit).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Nao autenticado no painel.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: DASHBOARD_PASSWORD ausente ou CSRF invalido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate limit da reanalise em lote.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Nenhum provedor de LLM configurado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/stats:
+    get:
+      tags: [stats]
+      summary: Estatisticas do dashboard + feedbacks recentes.
+      security:
+        - {}
+        - sessionCookie: []
+        - bearerToken: []
+      responses:
+        '200':
+          description: Estatisticas (sem dados, ou o painel completo).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardStats'
+        '401':
+          description: Autenticacao necessaria.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/session:
+    get:
+      tags: [session]
+      summary: Estado da sessao do painel + token CSRF.
+      description: Rota publica (o login depende dela). Responde Cache-Control no-store.
+      responses:
+        '200':
+          description: Estado da sessao.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+
+  /login:
+    post:
+      tags: [session]
+      summary: Login do painel (JSON + X-CSRF-Token).
+      security:
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/XCsrfToken'
+        - $ref: '#/components/parameters/NextQuery'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login aceito (ou auth desligada); next ja filtrado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          description: CSRF ausente/invalido (a sessao expirou).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Senha incorreta.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Muitas tentativas de login.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /logout:
+    post:
+      tags: [session]
+      summary: Encerra a sessao do painel.
+      description: Idempotente e sem CSRF; sempre redireciona para o login (302).
+      responses:
+        '302':
+          description: Deslogado; redireciona para o login.
+    get:
+      tags: [session]
+      summary: Encerra a sessao do painel (por GET, idempotente).
+      responses:
+        '302':
+          description: Deslogado; redireciona para o login.
+
+  /health:
+    get:
+      tags: [health]
+      summary: Readiness/liveness probe (valida o app e o banco).
+      responses:
+        '200':
+          description: App e banco de pe.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+        '503':
+          description: Banco inacessivel.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+
+  /api/settings/providers:
+    get:
+      tags: [providers]
+      summary: Catalogo, cadeia do ambiente e chaves salvas.
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: Estado do cofre de provedores.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProvidersResponse'
+        '401':
+          description: Nao autenticado no painel.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: DASHBOARD_PASSWORD ausente (auth_not_configured) ou CSRF invalido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      tags: [providers]
+      summary: Cadastra uma chave de provedor.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/XCsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProviderCreateRequest'
+      responses:
+        '201':
+          description: Chave criada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderCredential'
+        '400':
+          description: Corpo/provedor/modelo/chave/prioridade/enabled invalidos.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Nao autenticado no painel.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: DASHBOARD_PASSWORD ausente ou CSRF invalido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Chave duplicada, limite de chaves atingido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: O provedor recusou a chave (verificacao).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Cofre desligado (FEEDLENS_ENCRYPTION_KEY ausente).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/settings/providers/{credential_id}:
+    parameters:
+      - $ref: '#/components/parameters/CredentialId'
+    patch:
+      tags: [providers]
+      summary: Atualiza uma chave de provedor.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/XCsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProviderUpdateRequest'
+      responses:
+        '200':
+          description: Chave atualizada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderCredential'
+        '400':
+          description: Corpo invalido ou nada para alterar.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Nao autenticado no painel.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: DASHBOARD_PASSWORD ausente ou CSRF invalido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Chave nao encontrada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: A alteracao colide com uma chave existente (duplicada).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: O provedor recusou a nova chave.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Cofre desligado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      tags: [providers]
+      summary: Remove uma chave de provedor.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/XCsrfToken'
+      responses:
+        '204':
+          description: Chave removida.
+        '401':
+          description: Nao autenticado no painel.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: DASHBOARD_PASSWORD ausente ou CSRF invalido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Chave nao encontrada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/settings/providers/reorder:
+    post:
+      tags: [providers]
+      summary: Reordena a cadeia de chaves (prioridade).
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/XCsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReorderRequest'
+      responses:
+        '200':
+          description: Cadeia reordenada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProvidersListResponse'
+        '400':
+          description: ids ausente ou invalido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Nao autenticado no painel.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: DASHBOARD_PASSWORD ausente ou CSRF invalido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/settings/providers/{credential_id}/test:
+    parameters:
+      - $ref: '#/components/parameters/CredentialId'
+    post:
+      tags: [providers]
+      summary: Testa a chave salva (1 chamada minima paga) e registra o resultado.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/XCsrfToken'
+      responses:
+        '200':
+          description: Resultado do teste.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderTestResult'
+        '401':
+          description: Nao autenticado no painel.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: DASHBOARD_PASSWORD ausente ou CSRF invalido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Chave nao encontrada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Nao foi possivel decifrar a chave (FEEDLENS_ENCRYPTION_KEY mudou).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Cofre desligado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: session
+      description: Cookie de sessao do painel, assinado pela SECRET_KEY do Flask.
+    bearerToken:
+      type: http
+      scheme: bearer
+      description: API_READ_TOKEN para leitura servidor-a-servidor (so nos GET).
+    ingestApiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: INGEST_API_KEY, quando configurada no servidor.
+    byokHeaders:
+      type: apiKey
+      in: header
+      name: X-LLM-Api-Key
+      description: Chave de LLM do proprio cliente (acompanha X-LLM-Provider).
+
+  parameters:
+    FeedbackId:
+      name: feedback_id
+      in: path
+      required: true
+      description: UUID do feedback.
+      schema:
+        type: string
+    CredentialId:
+      name: credential_id
+      in: path
+      required: true
+      description: UUID da chave de provedor.
+      schema:
+        type: string
+    Page:
+      name: page
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PerPage:
+      name: per_page
+      in: query
+      required: false
+      description: Capado em 100 pelo servidor.
+      schema:
+        type: integer
+        minimum: 1
+        default: 20
+    SentimentFilter:
+      name: sentiment
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/Sentiment'
+    SpamFilter:
+      name: spam
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/SpamMode'
+    AnalysisFilter:
+      name: analysis
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/AnalysisFilter'
+    NextQuery:
+      name: next
+      in: query
+      required: false
+      description: Destino pos-login; o servidor so aceita caminhos locais.
+      schema:
+        type: string
+    XApiKey:
+      name: X-API-Key
+      in: header
+      required: false
+      schema:
+        type: string
+    XLlmProvider:
+      name: X-LLM-Provider
+      in: header
+      required: false
+      schema:
+        type: string
+    XLlmApiKey:
+      name: X-LLM-Api-Key
+      in: header
+      required: false
+      schema:
+        type: string
+    XCsrfToken:
+      name: X-CSRF-Token
+      in: header
+      required: false
+      description: Token CSRF da sessao (de GET /auth/session ou GET /api/settings/providers).
+      schema:
+        type: string
+
+  schemas:
+    Sentiment:
+      type: string
+      enum: [POSITIVO, NEGATIVO, INCONCLUSIVO]
+    AnalysisStatus:
+      type: string
+      enum: [analyzed, unanalyzed]
+    SpamMode:
+      type: string
+      enum: [exclude, include, only]
+    AnalysisFilter:
+      type: string
+      enum: [any, unanalyzed]
+    ProviderId:
+      type: string
+      enum: [openai, anthropic, gemini, groq, openrouter]
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+        detail:
+          type: [string, "null"]
+      additionalProperties: true
+
+    RequestedFeature:
+      type: object
+      required: [code, reason]
+      properties:
+        code:
+          type: string
+        reason:
+          type: string
+      additionalProperties: false
+
+    Feedback:
+      type: object
+      required:
+        - id
+        - feedback
+        - sentiment
+        - is_spam
+        - analysis_status
+        - analysis_error
+        - analyzed_by
+        - created_at
+        - requested_features
+      properties:
+        id:
+          type: string
+        feedback:
+          type: string
+        sentiment:
+          oneOf:
+            - $ref: '#/components/schemas/Sentiment'
+            - type: "null"
+        is_spam:
+          type: boolean
+        analysis_status:
+          $ref: '#/components/schemas/AnalysisStatus'
+        analysis_error:
+          type: [string, "null"]
+        analyzed_by:
+          type: [string, "null"]
+        created_at:
+          type: string
+        requested_features:
+          type: array
+          items:
+            $ref: '#/components/schemas/RequestedFeature'
+      additionalProperties: false
+
+    FeedbackIngestRequest:
+      type: object
+      required: [id, feedback]
+      properties:
+        id:
+          type: string
+          description: UUID valido.
+        feedback:
+          type: string
+          description: Texto nao-vazio, ate MAX_FEEDBACK_CHARS.
+      additionalProperties: true
+
+    FeedbackIngestResult:
+      type: object
+      required:
+        - id
+        - sentiment
+        - is_spam
+        - requested_features
+        - analyzed_by
+        - analysis_status
+        - analysis_error
+      properties:
+        id:
+          type: string
+        sentiment:
+          oneOf:
+            - $ref: '#/components/schemas/Sentiment'
+            - type: "null"
+        is_spam:
+          type: boolean
+        requested_features:
+          type: array
+          items:
+            $ref: '#/components/schemas/RequestedFeature'
+        analyzed_by:
+          type: [string, "null"]
+        analysis_status:
+          $ref: '#/components/schemas/AnalysisStatus'
+        analysis_error:
+          type: [string, "null"]
+      additionalProperties: false
+
+    FeedbackReviewRequest:
+      type: object
+      description: Pelo menos um de is_spam / sentiment.
+      properties:
+        is_spam:
+          type: boolean
+        sentiment:
+          $ref: '#/components/schemas/Sentiment'
+      additionalProperties: true
+
+    Pagination:
+      type: object
+      required: [page, per_page, total, pages, has_next, has_prev]
+      properties:
+        page:
+          type: integer
+        per_page:
+          type: integer
+        total:
+          type: integer
+        pages:
+          type: integer
+        has_next:
+          type: boolean
+        has_prev:
+          type: boolean
+      additionalProperties: false
+
+    FeedbackListResponse:
+      type: object
+      required: [items, pagination, sentiment, spam, analysis]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Feedback'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+        sentiment:
+          type: [string, "null"]
+        spam:
+          $ref: '#/components/schemas/SpamMode'
+        analysis:
+          $ref: '#/components/schemas/AnalysisFilter'
+      additionalProperties: false
+
+    ReanalyzePendingRequest:
+      type: object
+      properties:
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 10
+          default: 5
+      additionalProperties: true
+
+    ReanalyzePendingResponse:
+      type: object
+      required: [processed, analyzed, failed, remaining, stopped_reason]
+      properties:
+        processed:
+          type: integer
+        analyzed:
+          type: integer
+        failed:
+          type: integer
+        remaining:
+          type: integer
+        stopped_reason:
+          oneOf:
+            - type: "null"
+            - type: string
+              enum: [provider_error]
+      additionalProperties: false
+
+    ReanalyzeUnavailableError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+        detail:
+          type: [string, "null"]
+        feedback:
+          $ref: '#/components/schemas/Feedback'
+      additionalProperties: true
+
+    DashboardStats:
+      type: object
+      required: [has_data]
+      properties:
+        has_data:
+          type: boolean
+        unanalyzed:
+          type: integer
+        total_feedbacks:
+          type: integer
+        sentiment_counts:
+          $ref: '#/components/schemas/SentimentCounts'
+        sentiment_percentages:
+          type: object
+          additionalProperties:
+            type: number
+        top_features:
+          type: array
+          items:
+            $ref: '#/components/schemas/FeatureStat'
+        recent_feedbacks:
+          type: array
+          items:
+            $ref: '#/components/schemas/Feedback'
+      additionalProperties: false
+
+    SentimentCounts:
+      type: object
+      properties:
+        POSITIVO:
+          type: integer
+        NEGATIVO:
+          type: integer
+        INCONCLUSIVO:
+          type: integer
+      additionalProperties: true
+
+    FeatureStat:
+      type: object
+      required: [code, count]
+      properties:
+        code:
+          type: string
+        count:
+          type: integer
+        percentage:
+          type: number
+      additionalProperties: true
+
+    SessionResponse:
+      type: object
+      required: [auth_enabled, authenticated, csrf_token]
+      properties:
+        auth_enabled:
+          type: boolean
+        authenticated:
+          type: boolean
+        csrf_token:
+          type: string
+      additionalProperties: false
+
+    LoginRequest:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+      additionalProperties: true
+
+    LoginResponse:
+      type: object
+      required: [ok, next]
+      properties:
+        ok:
+          type: boolean
+        next:
+          type: string
+      additionalProperties: false
+
+    Health:
+      type: object
+      required: [status, database]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        database:
+          type: string
+          enum: [ok, error]
+      additionalProperties: false
+
+    ProviderCatalogEntry:
+      type: object
+      required: [id, label, default_model, server_key_configured]
+      properties:
+        id:
+          $ref: '#/components/schemas/ProviderId'
+        label:
+          type: string
+        default_model:
+          type: string
+        server_key_configured:
+          type: boolean
+      additionalProperties: false
+
+    ProviderCredential:
+      type: object
+      required:
+        - id
+        - provider
+        - model
+        - priority
+        - enabled
+        - key_hint
+        - last_verified_at
+        - last_error_kind
+        - created_at
+      properties:
+        id:
+          type: string
+        provider:
+          $ref: '#/components/schemas/ProviderId'
+        model:
+          type: string
+        priority:
+          type: integer
+        enabled:
+          type: boolean
+        key_hint:
+          type: string
+        last_verified_at:
+          type: [string, "null"]
+        last_error_kind:
+          type: [string, "null"]
+        created_at:
+          type: string
+      additionalProperties: false
+
+    ProvidersResponse:
+      type: object
+      required: [vault_enabled, csrf_token, catalog, environment_chain, providers]
+      properties:
+        vault_enabled:
+          type: boolean
+        csrf_token:
+          type: string
+        catalog:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProviderCatalogEntry'
+        environment_chain:
+          type: array
+          items:
+            type: string
+        providers:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProviderCredential'
+      additionalProperties: false
+
+    ProvidersListResponse:
+      type: object
+      required: [providers]
+      properties:
+        providers:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProviderCredential'
+      additionalProperties: false
+
+    ProviderCreateRequest:
+      type: object
+      required: [provider, api_key]
+      properties:
+        provider:
+          $ref: '#/components/schemas/ProviderId'
+        api_key:
+          type: string
+        model:
+          type: string
+        priority:
+          type: integer
+          minimum: 1
+          maximum: 1000
+        enabled:
+          type: boolean
+        verify:
+          type: boolean
+          default: true
+      additionalProperties: true
+
+    ProviderUpdateRequest:
+      type: object
+      description: Pelo menos um campo alteravel.
+      properties:
+        enabled:
+          type: boolean
+        priority:
+          type: integer
+          minimum: 1
+          maximum: 1000
+        model:
+          type: string
+        api_key:
+          type: string
+        verify:
+          type: boolean
+      additionalProperties: true
+
+    ReorderRequest:
+      type: object
+      required: [ids]
+      properties:
+        ids:
+          type: array
+          items:
+            type: string
+      additionalProperties: false
+
+    ProviderTestResult:
+      type: object
+      required: [ok, kind, latency_ms, checked_at, provider]
+      properties:
+        ok:
+          type: boolean
+        kind:
+          type: [string, "null"]
+        latency_ms:
+          type: [number, "null"]
+        checked_at:
+          type: string
+        provider:
+          $ref: '#/components/schemas/ProviderCredential'
+      additionalProperties: false
