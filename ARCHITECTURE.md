@@ -138,7 +138,7 @@ token CSRF.
 
 | Operação | Rota | Quem pode |
 |---|---|---|
-| Enviar feedback | `POST /api/feedbacks` | Público; exige `X-API-Key` se `INGEST_API_KEY` estiver definida |
+| Enviar feedback | `POST /api/feedbacks` | Público; exige `X-API-Key` se `INGEST_API_KEY` estiver definida (ou `Origin` em `INGEST_PUBLIC_ORIGINS`, sob rate limit e teto diário) |
 | Ler (listar, detalhe, estatísticas) | `GET /api/feedbacks`, `/api/feedbacks/<id>`, `/api/stats` | Sessão do painel ou `Bearer API_READ_TOKEN`; aberto só se nenhum dos dois estiver definido |
 | Corrigir ou reanalisar | `PATCH /api/feedbacks/<id>`, `POST /api/feedbacks/<id>/reanalyze` | **Só** a sessão do painel + `X-CSRF-Token`; `403` sem `DASHBOARD_PASSWORD` |
 | Gerir chaves de provedor | `/api/settings/providers…` | Sessão do painel + CSRF; exige `DASHBOARD_PASSWORD` e `FEEDLENS_ENCRYPTION_KEY` |
@@ -169,7 +169,8 @@ assim** porque os dois têm públicos, riscos e ritmos de deploy diferentes:
   recompilar.
 
 **O custo dessa escolha** é que um site público não guarda segredo: com
-`INGEST_API_KEY` ligada, o formulário recebe `401`. Ver §4 e §6.
+`INGEST_API_KEY` ligada e sem a ingestão pública, o formulário recebe `401`.
+Ver §4 e §6.
 
 ### 3.2 O prompt como contrato, medido por testes e por avaliação
 
@@ -311,7 +312,12 @@ tags de formatação, sem links, imagens ou atributos.
 - **Ingestão.** `POST /api/feedbacks` tem rate limit por IP (`RATELIMIT_INGEST`),
   teto de tamanho do corpo e do texto, e `INGEST_API_KEY` opcional, lida só do header
   `X-API-Key`, com rotação sem downtime (lista separada por vírgula). A chave é de
-  servidor para servidor; não a embuta em um site público.
+  servidor para servidor; não a embuta em um site público. Para o formulário público
+  há a **ingestão pública** opt-in (`INGEST_PUBLIC_ORIGINS`): envios sem chave a partir
+  de origens listadas, sob rate limit próprio (`RATELIMIT_INGEST_PUBLIC`) e teto diário
+  global (`INGEST_PUBLIC_DAILY_CAP`, `429 public_ingest_cap` antes do corpo e da IA). O
+  header `Origin` é forjável fora do navegador, então não autentica — só barra outras
+  páginas; a proteção de custo é o limite de taxa e o teto. Ver §6.
 - **Leitura.** Os `GET` expõem o texto dos feedbacks, então seguem a regra do painel:
   sessão ou `Authorization: Bearer <API_READ_TOKEN>`, nunca token na query string.
 - **Chaves de LLM.** No BYOK por requisição a chave não é gravada nem logada; no
@@ -365,9 +371,12 @@ O repositório não traz configuração de uma hospedagem específica: o `Docker
   na hora e analisar depois (`202`) é a evolução natural: a marcação de "não
   analisado" e a reanálise já são a base para isso.
 - **Ingestão pública sem segredo.** Um formulário público não pode carregar a
-  `INGEST_API_KEY`. Para recebimento público de verdade falta uma rota de ingestão
-  sem segredo (origem permitida, limite próprio e teto de gasto), ou receber pelo
-  seu backend e reenviar com a chave. É uma mudança de backend, fora do formulário.
+  `INGEST_API_KEY`. Dois caminhos: receber pelo seu backend e reenviar com a chave, ou
+  ligar a **ingestão pública** (`INGEST_PUBLIC_ORIGINS`), que aceita envios sem chave
+  das origens listadas, sob rate limit próprio (`RATELIMIT_INGEST_PUBLIC`) e teto diário
+  global (`INGEST_PUBLIC_DAILY_CAP`). O `Origin` é forjável fora de um navegador e não
+  autentica ninguém: ele só impede o uso a partir de outras páginas; a barreira de gasto
+  é o rate limit + o teto. Desligada por padrão, não altera o comportamento atual.
 - **Rate limit por processo.** O padrão `memory://` vale para um único processo;
   com vários workers é preciso um Redis.
 - **Camadas gratuitas de LLM** têm limites de requisições e de tokens por minuto e

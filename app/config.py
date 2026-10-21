@@ -71,6 +71,20 @@ class Config:
     # trouxer a PRÓPRIA chave de LLM (headers X-LLM-*), já que paga a chamada.
     # Continua gravando no seu banco, então só ligue se aceitar esse volume.
     INGEST_ALLOW_BYOK_WITHOUT_KEY: bool = get_env_bool('INGEST_ALLOW_BYOK_WITHOUT_KEY', False)
+    # Ingestão pública opt-in (desligada por padrão): origens EXATAS, separadas
+    # por vírgula (ex.: https://form.exemplo.com), de onde um formulário público
+    # pode enviar SEM chave de ingestão. ATENÇÃO: o header Origin é forjável
+    # fora de um navegador, então isto NÃO autentica ninguém — só impede o uso a
+    # partir de páginas de outros sites. A barreira real contra gasto de LLM é o
+    # rate limit por IP + o teto diário abaixo. '*' é recusado no boot.
+    INGEST_PUBLIC_ORIGINS: List[str] = get_env_list('INGEST_PUBLIC_ORIGINS')
+    # Rate limit por IP aplicado só ao caminho público (sem chave, via Origin).
+    RATELIMIT_INGEST_PUBLIC: str = os.environ.get(
+        'RATELIMIT_INGEST_PUBLIC', '5 per minute')
+    # Teto GLOBAL de ingestões públicas (sem chave) nas últimas 24h, contado no
+    # banco por Feedback.created_at. Estourado, o endpoint responde 429 antes de
+    # ler o corpo ou chamar o LLM. Gasto máximo ≈ este teto × custo por análise.
+    INGEST_PUBLIC_DAILY_CAP: int = get_env_int('INGEST_PUBLIC_DAILY_CAP', 500)
 
     # Cookie de sessão do dashboard. HttpOnly impede leitura por JS e
     # SameSite=Lax corta CSRF cross-site nos POSTs do painel. Secure (só

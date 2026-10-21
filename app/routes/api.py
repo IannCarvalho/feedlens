@@ -1,5 +1,6 @@
 import uuid
 import logging
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from flask import Blueprint, request, jsonify, current_app
 from typing import Dict, Any
@@ -8,7 +9,7 @@ from app import db
 from app.auth import api_read_required, auth_enabled, is_authenticated
 from app.csrf import CSRF_HEADER, csrf_is_valid
 from app.extensions import limiter
-from app.ingest_auth import ingest_key_required
+from app.ingest_auth import ingest_key_required, is_public_ingest
 from app.models.feedback import Feedback
 from app.services.feedback_analyzer import FeedbackAnalyzer
 from app.services.feedback_service import (
@@ -79,6 +80,12 @@ def validate_feedback_request() -> Dict[str, Any]:
 
 @api.route('/feedbacks', methods=['POST'])
 @limiter.limit(lambda: current_app.config.get('RATELIMIT_INGEST', '30 per minute'))
+@limiter.limit(
+    lambda: current_app.config.get('RATELIMIT_INGEST_PUBLIC', '5 per minute'),
+    # Só o caminho público (sem chave, via Origin permitido) sofre este limite
+    # mais estrito; chave válida e BYOK seguem apenas o RATELIMIT_INGEST acima.
+    exempt_when=lambda: not is_public_ingest(),
+)
 @ingest_key_required
 def analyze_feedback():
     """
@@ -87,6 +94,23 @@ def analyze_feedback():
     Receives a JSON with feedback ID and text, analyzes sentiment,
     spam status and identifies requested features.
     """
+    # Caminho público (sem chave): teto diário GLOBAL contado no banco, aplicado
+    # ANTES de ler o corpo ou chamar o LLM. Estourado = 429 sem gastar nada.
+    # Uma chave de ingestão válida nunca chega aqui (is_public_ingest é False).
+    if is_public_ingest():
+        cap = current_app.config.get('INGEST_PUBLIC_DAILY_CAP', 500)
+        window_start = datetime.now(timezone.utc) - timedelta(hours=24)
+        used = db.session.query(Feedback).filter(
+            Feedback.created_at >= window_start).count()
+        if used >= cap:
+            logger.warning(
+                'Public ingest daily cap reached (%d/%d in last 24h)', used, cap)
+            return jsonify({
+                'error': 'O limite diário de envios públicos foi atingido. '
+                         'Tente novamente mais tarde.',
+                'code': 'public_ingest_cap',
+            }), 429
+
     try:
         data = validate_feedback_request()
     except ValueError as e:
