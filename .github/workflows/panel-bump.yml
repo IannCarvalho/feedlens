@@ -1,0 +1,156 @@
+name: Panel bump
+
+# Abre um PR quando sai um release novo do feedlens-panel, trocando as duas
+# linhas do Dockerfile (ARG PANEL_VERSION e ARG PANEL_SHA256). Não faz merge.
+#
+# O PR aberto com o GITHUB_TOKEN não dispara o CI (limitação do GitHub), então
+# este workflow faz a verificação antes de abrir o PR: baixa o release com o
+# script de desenvolvimento, confere o checksum e builda a imagem com o smoke
+# test. Só abre o PR se tudo passar.
+#
+# Roda todo dia e sob demanda (Actions > Panel bump > Run workflow). Exige, em
+# Settings > Actions > General, "Allow GitHub Actions to create and approve pull
+# requests" ligado.
+
+on:
+  schedule:
+    - cron: "23 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: panel-bump
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PANEL_REPO: IannCarvalho/feedlens-panel
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Descobrir se há release novo
+        id: release
+        run: |
+          set -euo pipefail
+          tag="$(gh api "repos/${PANEL_REPO}/releases/latest" --jq .tag_name)"
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag inesperada no release mais recente: '$tag'" >&2
+            exit 1
+          fi
+          latest="${tag#v}"
+          current="$(sed -n 's/^ARG PANEL_VERSION=//p' Dockerfile)"
+          echo "Atual: ${current} | Mais recente: ${latest}"
+
+          newest="$(printf '%s\n%s\n' "$current" "$latest" | sort -V | tail -n 1)"
+          if [ "$newest" = "$current" ]; then
+            echo "Nada a fazer: o Dockerfile já está na versão mais recente."
+            echo "bump=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          branch="bot/panel-v${latest}"
+          if [ -n "$(gh pr list --state all --head "$branch" --json number --jq '.[].number')" ]; then
+            echo "Já existe PR para ${branch} (aberto, fechado ou mergeado): nada a fazer."
+            echo "bump=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          sha="$(curl -fsSL "https://github.com/${PANEL_REPO}/releases/download/${tag}/feedlens-panel-${tag}.tgz.sha256" | awk 'NR==1 {print $1}')"
+          if ! [[ "$sha" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "Checksum inválido no release ${tag}." >&2
+            exit 1
+          fi
+          {
+            echo "bump=true"
+            echo "version=${latest}"
+            echo "current=${current}"
+            echo "sha=${sha}"
+            echo "branch=${branch}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Atualizar o pin no Dockerfile
+        if: steps.release.outputs.bump == 'true'
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          SHA: ${{ steps.release.outputs.sha }}
+        run: |
+          set -euo pipefail
+          sed -i "s/^ARG PANEL_VERSION=.*/ARG PANEL_VERSION=${VERSION}/" Dockerfile
+          sed -i "s/^ARG PANEL_SHA256=.*/ARG PANEL_SHA256=${SHA}/" Dockerfile
+          git diff --stat
+
+      - name: Conferir o download e o checksum (script de desenvolvimento)
+        if: steps.release.outputs.bump == 'true'
+        run: python3 scripts/fetch_panel.py --dest "${RUNNER_TEMP}/spa"
+
+      - name: Build da imagem
+        if: steps.release.outputs.bump == 'true'
+        run: docker build -t feedlens:bump .
+
+      - name: Smoke test (painel e assets servidos pela imagem)
+        if: steps.release.outputs.bump == 'true'
+        run: |
+          docker run -d --name feedlens -p 5000:5000 \
+            -e FLASK_ENV=production \
+            -e SECRET_KEY=ci-smoke-secret-key-0123456789abcdef \
+            -e DATABASE_URL=sqlite:////tmp/feedlens.db \
+            feedlens:bump
+          for i in $(seq 1 30); do
+            curl -fsS http://localhost:5000/health > /dev/null && break
+            sleep 1
+          done
+          curl -fsS http://localhost:5000/health
+          curl -fsS http://localhost:5000/ > index.html
+          grep -q '<div id="app">' index.html
+          asset=$(grep -o '/static/spa/assets/[^"]*\.js' index.html | head -n 1)
+          test -n "$asset"
+          curl -fsS -o /dev/null "http://localhost:5000$asset"
+
+      - name: Logs do container
+        if: failure()
+        run: docker logs feedlens || true
+
+      - name: Abrir o PR
+        if: steps.release.outputs.bump == 'true'
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          CURRENT: ${{ steps.release.outputs.current }}
+          SHA: ${{ steps.release.outputs.sha }}
+          BRANCH: ${{ steps.release.outputs.branch }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add Dockerfile
+          git commit -m "build: painel v${VERSION}" -m "Sobe o feedlens-panel de v${CURRENT} para v${VERSION}."
+          git push origin "$BRANCH"
+
+          cat > "${RUNNER_TEMP}/pr-body.md" <<EOF
+          ## O que é
+
+          Sobe o painel embutido na imagem de \`v${CURRENT}\` para [\`v${VERSION}\`](https://github.com/${PANEL_REPO}/releases/tag/v${VERSION}) (release do feedlens-panel). Aberto automaticamente pelo workflow \`panel-bump.yml\`; **não é mergeado sozinho**.
+
+          - \`ARG PANEL_VERSION\`: \`${CURRENT}\` → \`${VERSION}\`
+          - \`ARG PANEL_SHA256\`: \`${SHA}\` (lido do \`.sha256\` do release)
+
+          ## O que o workflow já verificou
+
+          - \`scripts/fetch_panel.py\` baixou o release e o checksum conferiu.
+          - A imagem buildou (o \`ADD --checksum\` do Dockerfile também conferiu) e o smoke test passou: \`/health\`, \`index.html\` do painel e um asset JS.
+
+          ## O que ele não verificou
+
+          - O CI normal **não roda automaticamente** neste PR (PRs abertos com o \`GITHUB_TOKEN\` não disparam workflows). Se quiser, rode-o de novo empurrando um commit vazio na branch.
+          - Se o contrato com a API mudou nesta versão do painel, leia as notas do release: o painel novo precisa de um backend compatível.
+          EOF
+
+          gh pr create --base main --head "$BRANCH" \
+            --title "build: painel v${VERSION}" \
+            --body-file "${RUNNER_TEMP}/pr-body.md"

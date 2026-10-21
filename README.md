@@ -130,7 +130,9 @@ feedlens/
 ├── scripts/
 │   └── fetch_panel.py             # Baixa o painel do release para app/static/spa (fora do Docker)
 ├── tests/                         # Suíte pytest do backend
-├── .github/workflows/ci.yml       # CI: backend, Postgres e Docker
+├── .github/workflows/
+│   ├── ci.yml                     # CI: backend, Postgres e Docker
+│   └── panel-bump.yml             # Abre PR quando sai release novo do painel
 ├── .env-example                   # Exemplo de variáveis de ambiente
 ├── docker-compose.yml             # Aplicação + PostgreSQL para rodar com Docker
 ├── Dockerfile                     # Baixa o painel do release (com checksum) e monta a aplicação
@@ -287,6 +289,8 @@ python scripts/fetch_panel.py
 O script usa a versão e o checksum fixados nas linhas `ARG PANEL_VERSION` e `ARG PANEL_SHA256` do `Dockerfile` (a mesma fonte da imagem Docker), recusa o arquivo se o checksum não bater e extrai em `app/static/spa/`. Sem o painel instalado, a raiz responde `503` com essa mesma instrução. Rode de novo quando a versão do `Dockerfile` mudar.
 
 Para atualizar o painel: publique uma tag no feedlens-panel e troque as duas linhas do `Dockerfile` pelos valores do release (o `.sha256` do release traz o checksum).
+
+Você não precisa fazer isso à mão: o workflow [`panel-bump.yml`](.github/workflows/panel-bump.yml) roda todo dia (e sob demanda, em Actions > Panel bump > Run workflow), vê se há release novo, confere o download e o checksum, builda a imagem com o smoke test e, só então, abre um PR trocando as duas linhas. Ele nunca faz merge. Como o PR aberto pelo `GITHUB_TOKEN` não dispara o CI, a verificação acontece dentro do próprio workflow. Ele exige "Allow GitHub Actions to create and approve pull requests" ligado em Settings > Actions > General. Leia as notas do release antes de mergear: se o painel novo depende de uma mudança de API, o backend precisa dela primeiro.
 
 Para iniciar a aplicação em modo de desenvolvimento:
 
