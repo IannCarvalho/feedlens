@@ -385,9 +385,6 @@ O repositório não traz configuração de uma hospedagem específica: o `Docker
   `evals/` antes de torná-lo o principal.
 - **Sem histórico de correções.** A troca manual de sentimento ou de spam fica só
   numa linha do log do servidor.
-- **O resumo semanal ainda conta os "não analisados".** Ele tem consultas próprias,
-  que já ignoram spam mas não o `analysis_status`, então um feedback que a IA não
-  analisou entra como `INCONCLUSIVO`, diferente do que o dashboard faz.
 - **Reanálise em lote só pela linha de comando.** O painel reanalisa um feedback por
   vez.
 - **O painel Vue não tem testes de componente.** É validado por typecheck, lint e

@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func
 
 from app import db
-from app.models.feedback import Feedback, RequestedFeature
+from app.models.feedback import ANALYSIS_ANALYZED, Feedback, RequestedFeature
 from app.config import Config
 
 logger = logging.getLogger(__name__)
@@ -30,9 +30,13 @@ def generate_weekly_summary():
     # Define the last week period
     end_date = datetime.now(timezone.utc)
     start_date = end_date - timedelta(days=7)
+    # Mesmo critério do dashboard (statistics_service, analyzed_only): fora os
+    # feedbacks que a IA não analisou, cujo sentimento é só o valor padrão e não
+    # uma opinião. Antes o resumo só ignorava spam e os contava como Inconclusivos.
     in_window = (
         Feedback.created_at.between(start_date, end_date),
         Feedback.is_spam == False,
+        Feedback.analysis_status == ANALYSIS_ANALYZED,
     )
 
     sentiment_rows = db.session.query(

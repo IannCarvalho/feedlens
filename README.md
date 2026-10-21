@@ -713,7 +713,6 @@ Cuidados de segurança:
 - **A análise é síncrona:** o `POST /api/feedbacks` espera a IA responder. Com o provedor lento, quem envia espera (o formulário avisa "Ainda enviando..."). Gravar na hora e analisar depois é a evolução natural.
 - **Formulário público e chave de ingestão:** um site público não guarda segredo, então com `INGEST_API_KEY` ligada o formulário recebe `401`. Há dois caminhos: receber pelo seu backend e reenviar com a chave, ou ligar a **ingestão pública** (`INGEST_PUBLIC_ORIGINS`), que aceita envios sem chave das origens listadas sob rate limit próprio e teto diário. Como o `Origin` é forjável fora de um navegador, isso não autentica ninguém — a proteção é o limite de taxa e o teto de gasto.
 - **Sem histórico de correções:** a troca manual de sentimento ou de spam fica só numa linha do log do servidor; não há registro de quem corrigiu o quê.
-- **O resumo semanal ainda conta os "não analisados"** como Inconclusivos: as consultas do e-mail ignoram spam, mas não o estado da análise, diferente do dashboard.
 - **Reanálise em lote só pela linha de comando:** o painel reanalisa um feedback por vez.
 - **O painel Vue não tem testes de componente**, só typecheck, lint e build.
 - **Camadas gratuitas de LLM têm limites** de requisições e de tokens por minuto e por dia. Meça com `evals/` antes de usar um modelo gratuito como principal.
