@@ -146,6 +146,45 @@ class FeedbackService:
         return None if analyzed else result['failure']
 
     @staticmethod
+    def reanalyze_pending_batch(analyzer, limit: int) -> Dict[str, object]:
+        """Reprocessa um LOTE pequeno de feedbacks não analisados, do mais
+        antigo ao mais novo.
+
+        Mesma primitiva que a CLI usa (``pending_analysis`` + ``reanalyze``),
+        então não há lógica duplicada. CADA feedback é UMA chamada paga ao
+        provedor; por isso o lote é pequeno e síncrono. Para no PRIMEIRO erro
+        de provedor (cota, timeout, resposta inválida) em vez de gastar o
+        resto das chamadas à toa, registrando ``stopped_reason``.
+
+        Devolve ``{processed, analyzed, failed, remaining, stopped_reason}``:
+        ``processed`` = feedbacks que o lote tentou; ``analyzed`` = quantos a
+        IA analisou; ``failed`` = quantos falharam (0 ou 1, já que para no
+        primeiro); ``remaining`` = total ainda não analisado APÓS o lote;
+        ``stopped_reason`` = ``'provider_error'`` se parou por falha, senão
+        ``None``. Levanta ``LLMNotConfiguredError`` sem provedor.
+        """
+        feedbacks = FeedbackService.pending_analysis(limit)
+        processed = analyzed = failed = 0
+        stopped_reason = None
+        for feedback in feedbacks:
+            processed += 1
+            failure = FeedbackService.reanalyze(feedback, analyzer)
+            if failure is None:
+                analyzed += 1
+                continue
+            failed += 1
+            stopped_reason = 'provider_error'
+            break
+        remaining = FeedbackService.count_unanalyzed()
+        return {
+            'processed': processed,
+            'analyzed': analyzed,
+            'failed': failed,
+            'remaining': remaining,
+            'stopped_reason': stopped_reason,
+        }
+
+    @staticmethod
     def apply_review(
         feedback: Feedback,
         is_spam: Optional[bool] = None,

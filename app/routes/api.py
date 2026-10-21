@@ -383,6 +383,58 @@ def reanalyze_feedback(feedback_id):
     return jsonify(feedback.to_dict()), 200
 
 
+@api.route('/feedbacks/reanalyze-pending', methods=['POST'])
+@limiter.limit(lambda: current_app.config.get('RATELIMIT_REANALYZE', '6 per minute'))
+@panel_write_required
+def reanalyze_pending():
+    """
+    Reprocessa EM LOTE os feedbacks que a IA não conseguiu analisar
+    (cota, timeout, resposta inválida), do mais antigo ao mais novo.
+
+    Equivale ao ``flask reanalyze-pending`` da linha de comando, mas pelo
+    painel: mesma proteção dos demais POSTs (sessão + CSRF) e a MESMA
+    primitiva de serviço. Corpo JSON OPCIONAL ``{"limit": int}`` (1..10,
+    padrão 5); fora da faixa, ou não inteiro, devolve 400.
+
+    ATENÇÃO: cada feedback do lote é UMA chamada paga ao provedor. O lote é
+    pequeno e SÍNCRONO de propósito (evita timeout de requisição web) e PARA
+    no primeiro erro de provedor, em vez de gastar o resto das chamadas.
+
+    200: ``{"processed": n, "analyzed": a, "failed": f, "remaining": r,
+    "stopped_reason": null | "provider_error"}``. ``remaining`` é o total
+    ainda não analisado após o lote. 503 ``llm_not_configured`` se não há
+    provedor configurado.
+    """
+    data = request.get_json(silent=True)
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        return jsonify({'error': 'Body must be a JSON object'}), 400
+
+    limit = data.get('limit', 5)
+    # bool é subclasse de int: True/False não são um limite válido.
+    if isinstance(limit, bool) or not isinstance(limit, int) or not (1 <= limit <= 10):
+        return jsonify({
+            'error': 'Field "limit" must be an integer between 1 and 10',
+            'code': 'invalid_limit',
+        }), 400
+
+    try:
+        result = FeedbackService.reanalyze_pending_batch(feedback_analyzer, limit)
+    except LLMNotConfiguredError:
+        return jsonify({
+            'error': 'Nenhum provedor de LLM configurado: defina uma chave no '
+                     'servidor ou cadastre uma em Provedores.',
+            'code': 'llm_not_configured',
+        }), 503
+
+    logger.info(
+        'Reanálise em lote: processed=%d analyzed=%d failed=%d remaining=%d stopped=%s',
+        result['processed'], result['analyzed'], result['failed'],
+        result['remaining'], result['stopped_reason'])
+    return jsonify(result), 200
+
+
 @api.route('/feedbacks/<feedback_id>', methods=['GET'])
 @api_read_required
 def get_feedback(feedback_id):
