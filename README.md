@@ -138,6 +138,7 @@ feedlens/
 ├── Dockerfile                     # Baixa o painel do release (com checksum) e monta a aplicação
 ├── gunicorn.conf.py               # Workers, threads e timeout do gunicorn
 ├── ARCHITECTURE.md                # Fluxos, decisões de arquitetura e segurança
+├── openapi.yaml                   # Contrato HTTP (OpenAPI 3.1) verificado por tests/test_openapi_contract.py
 ├── README.md                      # Este arquivo
 ├── requirements.txt               # Dependências Python
 ├── requirements-dev.txt           # Dependências de teste (inclui as de produção)
@@ -648,6 +649,8 @@ pytest tests
 ```
 
 O `pytest.ini` já aponta para `tests/` e põe a raiz no `sys.path`. A suíte não faz chamadas reais a provedores de LLM, então não gasta cota nem precisa de chave. Ela cobre a API (ingestão, leitura, correção e reanálise), autenticação e CSRF, o cofre de chaves, a cadeia de provedores, o contrato do prompt, as estatísticas, o SPA e as migrations. As migrations também rodam num PostgreSQL de verdade no CI (`flask db upgrade`, `flask db check`, `flask db downgrade base`), porque o SQLite dos testes não pega estouro de `VARCHAR`, chave estrangeira nem `timestamptz`.
+
+O contrato HTTP com os clientes está descrito em [`openapi.yaml`](openapi.yaml) (OpenAPI 3.1, na raiz do repositório): a ingestão `POST /api/feedbacks` e todas as rotas que o painel consome (sessão e CSRF, `GET /api/stats`, leitura e correção de feedbacks, reanálise unitária e em lote, e o cofre de provedores), com os códigos de erro e seus esquemas. `tests/test_openapi_contract.py` mantém a spec honesta sem custo nenhum: valida que o `openapi.yaml` é um documento OpenAPI 3.1 válido (`openapi-spec-validator`) e, para cada endpoint coberto, chama a API real pelo test client (com a LLM mockada) e confere o corpo e o status de cada resposta contra o esquema declarado (`jsonschema`). Se uma rota coberta sumir ou mudar de forma, o teste falha. Rode-o junto com o resto (`pytest tests`) ou sozinho com `pytest tests/test_openapi_contract.py`. Os tipos do painel (`src/types/api.ts`) ainda são mantidos à mão; gerá-los a partir deste `openapi.yaml` fica para um PR futuro.
 
 Os fronts têm testes e CI nos próprios repositórios: [feedlens-panel](https://github.com/IannCarvalho/feedlens-panel) (typecheck, lint e build; sem testes automatizados de componente) e [feedlens-form](https://github.com/IannCarvalho/feedlens-form) (typecheck, lint, Vitest, build com orçamento de bundle e a imagem Docker). Aqui, os testes do painel ficam no contrato: `tests/test_spa.py` (entrega e deep-links) e `tests/test_panel_pin.py` (pin e script de download).
 
