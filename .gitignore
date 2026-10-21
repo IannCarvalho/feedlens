@@ -74,8 +74,6 @@ instance/
 logs/
 *.log
 
-# Frontend (Vue + Vite)
-frontend/node_modules/
-frontend/dist/
-# Build output do SPA, gerado por `vite build` (no CI e no deploy).
+# Painel (SPA) instalado: baixado do release do feedlens-panel pelo Dockerfile
+# ou por `python scripts/fetch_panel.py`. Nao e comitado.
 app/static/spa/

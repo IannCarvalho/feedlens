@@ -5,25 +5,48 @@ Este documento aprofunda o [README](./README.md): ele existe para quem precisa
 e os comandos; aqui estão as fronteiras, o fluxo ponta a ponta de um feedback e o
 **porquê** de cada decisão não óbvia.
 
-Escopo: os componentes que vivem neste repositório (`app/`, `app/llm/`,
-`frontend/`, `feedback-form/`, `evals/` e `migrations/`) e como se encaixam.
-Variáveis de ambiente, rotas e comandos estão no README.
+Escopo: os componentes que vivem neste repositório (`app/`, `app/llm/`, `evals/` e
+`migrations/`) e como se encaixam com o painel e o formulário, que vivem em
+repositórios próprios (§1). Variáveis de ambiente, rotas e comandos estão no README.
 
 ---
 
 ## 1. Visão de contexto
 
-Dois fronts e um backend, no mesmo repositório. Os fronts são projetos
-independentes (cada um com `package.json`, build e CI próprios); o backend serve
-a API e, de quebra, o build do painel.
+Dois fronts e um backend, em **três repositórios**. Este é o backend; o
+[painel](https://github.com/IannCarvalho/feedlens-panel) e o
+[formulário](https://github.com/IannCarvalho/feedlens-form) são projetos
+independentes (cada um com `package.json`, build e CI próprios). O backend serve a
+API e, de quebra, o painel já compilado, que a imagem Docker baixa de um release.
 
-| Componente | Stack | Papel | Fala com |
-|---|---|---|---|
-| `app/` | Python 3.10+, Flask, SQLAlchemy | API REST, login do painel, análise, estatísticas, resumo por e-mail. Serve o build do painel. | banco, provedores de LLM (via `app/llm`), SMTP |
-| `app/llm/` | LiteLLM, cryptography | Catálogo de provedores, cadeia de credenciais e a chamada à LLM com fallback | provedores de LLM |
-| `frontend/` | Vue 3, Vite, PrimeVue, Pinia | **Painel** da equipe: números, listas, correção, provedores | Flask, na mesma origem |
-| `feedback-form/` | Angular 22 | **Formulário público** do cliente final: uma tela, sem login | Flask, de outra origem (CORS) |
-| `evals/` | Python | Mede o prompt de classificação contra casos de teste | provedores de LLM (gasta cota) |
+| Componente | Onde | Stack | Papel | Fala com |
+|---|---|---|---|---|
+| `app/` | este repositório | Python 3.10+, Flask, SQLAlchemy | API REST, login do painel, análise, estatísticas, resumo por e-mail. Serve o painel instalado em `app/static/spa/`. | banco, provedores de LLM (via `app/llm`), SMTP |
+| `app/llm/` | este repositório | LiteLLM, cryptography | Catálogo de provedores, cadeia de credenciais e a chamada à LLM com fallback | provedores de LLM |
+| Painel | [feedlens-panel](https://github.com/IannCarvalho/feedlens-panel) | Vue 3, Vite, PrimeVue, Pinia | **Painel** da equipe: números, listas, correção, provedores | Flask, na mesma origem |
+| Formulário | [feedlens-form](https://github.com/IannCarvalho/feedlens-form) | Angular 22, nginx | **Formulário público** do cliente final: uma tela, sem login | Flask, de outra origem (CORS) |
+| `evals/` | este repositório | Python | Mede o prompt de classificação contra casos de teste | provedores de LLM (gasta cota) |
+
+### Como os três repositórios se ligam
+
+- **Painel → backend, em tempo de build.** O painel publica um release (tarball +
+  `.sha256`) a cada tag. O `Dockerfile` deste repositório fixa a versão e o checksum
+  (`ARG PANEL_VERSION`, `ARG PANEL_SHA256`) e baixa com `ADD --checksum`: o build
+  falha se o arquivo não for exatamente o esperado. O painel continua **na mesma
+  imagem e na mesma origem** da API, por isso o cookie de sessão e o CSRF não
+  mudaram e não há CORS com credenciais. O `base` do Vite (`/static/spa/`) é um
+  acordo entre os dois repositórios: o painel o grava no build e o Flask serve esse
+  caminho.
+- **Formulário → backend, em tempo de execução.** O formulário é um site estático
+  que só conhece `POST /api/feedbacks` e `GET /health`; o endereço da API vem do
+  `config.json`.
+- **O contrato é a API.** Hoje ele é mantido à mão, dos dois lados: `src/types/api.ts`
+  no painel espelha as respostas de `app/routes/api.py`, e o formulário traduz os
+  status HTTP em `http-feedback.gateway.ts`. Uma mudança que quebre uma resposta
+  exige PR nos dois repositórios.
+- **Funcionalidade que cruza API e tela:** PR no backend primeiro, compatível com o
+  painel que está no ar → merge → PR no painel → tag → PR aqui subindo
+  `PANEL_VERSION`. Remover algo da API só depois de o painel novo estar publicado.
 
 A regra que organiza tudo: **o navegador nunca fala com a IA nem com o banco**. O
 formulário só envia texto, o painel só lê e corrige pela API, e o Flask é a única
@@ -34,8 +57,8 @@ seta é uma fronteira com um contrato.
 flowchart TD
     customer([Cliente final])
     team([Equipe])
-    form["feedback-form<br/>(Angular 22 · formulário público)"]
-    panel["frontend<br/>(Vue 3 · painel)"]
+    form["feedlens-form<br/>(Angular 22 · formulário público)"]
+    panel["feedlens-panel<br/>(Vue 3 · painel, embutido na imagem)"]
     api["Flask<br/>(API /api · login · serve o painel)"]
     llmlayer["app/llm<br/>(cadeia de provedores · LiteLLM)"]
     llm{{"OpenAI · Anthropic · Gemini · Groq · OpenRouter"}}
@@ -67,7 +90,7 @@ formulário:
 ```mermaid
 sequenceDiagram
     participant C as Cliente (browser)
-    participant F as feedback-form
+    participant F as feedlens-form
     participant A as Flask (POST /api/feedbacks)
     participant L as app/llm (LiteLLM)
     participant P as Provedor de IA
@@ -129,11 +152,12 @@ token CSRF.
 Seria mais curto ter uma só aplicação com uma tela pública e outra privada. **Não é
 assim** porque os dois têm públicos, riscos e ritmos de deploy diferentes:
 
-- **O painel** é servido pelo próprio Flask (o Vite grava o build em
+- **O painel** é servido pelo próprio Flask (o release do painel é extraído em
   `app/static/spa/`, com `base: /static/spa/`). Estando na **mesma origem** da API,
   o cookie de sessão do login funciona sem CORS com credenciais. É uma SPA: o
   Flask entrega o mesmo `index.html` na raiz e nos deep-links, e o Vue Router
-  escolhe a tela. Sem o build, a raiz responde `503` com a instrução para compilar.
+  escolhe a tela. Sem o painel instalado, a raiz responde `503` com a instrução
+  para baixá-lo (`python scripts/fetch_panel.py`).
 - **O formulário** não tem login, não mostra feedbacks de ninguém e fala só um
   contrato: `POST /api/feedbacks` com `{ id, feedback }`. O Flask **não** o serve,
   então o cookie de sessão do painel nunca chega a ele. Em produção ele é um site
@@ -310,15 +334,17 @@ tags de formatação, sem links, imagens ou atributos.
 |---|---|---|---|
 | Servidor | `flask run` (só `127.0.0.1`, sem debug) | gunicorn, 1 worker `gthread` | gunicorn (`wsgi:app`), `FLASK_ENV=production` |
 | Banco | SQLite (`instance/feedlens.db`) | PostgreSQL do compose | PostgreSQL (`DATABASE_URL`) |
-| Painel | build local (`npm --prefix frontend run build`) | compilado num estágio Node do `Dockerfile` | idem |
-| Formulário | `npm start` (porta 4200) | fora do compose | site estático em outro subdomínio |
+| Painel | `python scripts/fetch_panel.py` (ou `npm run dev` no repositório do painel) | baixado do release num estágio do `Dockerfile`, com checksum | idem |
+| Formulário | `npm start` (porta 4200), no repositório do formulário | fora do compose | site estático (ou a imagem nginx do formulário) em outro subdomínio |
 
 - **Migrations versionadas** (Alembic, `migrations/versions/`): `flask db upgrade` na
   primeira execução e a cada release. O CI roda as migrations (subir, `flask db
   check`, descer, subir) num PostgreSQL de verdade, porque o SQLite dos testes não
   pega estouro de `VARCHAR`, chave estrangeira nem `timestamptz`.
-- **Imagem Docker em dois estágios:** o Node compila o painel e só o resultado
-  estático segue para a imagem final, então o host não precisa de Node. O job
+- **Imagem Docker em dois estágios:** o primeiro baixa o release do painel e confere o
+  checksum fixado no `Dockerfile` (o build falha se não bater); só o resultado
+  estático segue para a imagem final, então o host não precisa de Node. Exige
+  BuildKit (Docker 23 ou superior) e acesso a `github.com` durante o build. O job
   `docker` do CI builda a imagem e confere que ela serve o `/health`, o `index.html`
   e um asset JS.
 - **`GET /health`** valida a conexão com o banco (`200` ou `503`), sem autenticação
@@ -356,7 +382,11 @@ O repositório não traz configuração de uma hospedagem específica: o `Docker
 - **Reanálise em lote só pela linha de comando.** O painel reanalisa um feedback por
   vez.
 - **O painel Vue não tem testes de componente.** É validado por typecheck, lint e
-  build; o formulário Angular tem testes com Vitest.
+  build no repositório do painel; o formulário Angular tem testes com Vitest no dele.
+- **O contrato entre os repositórios é mantido à mão.** Não há OpenAPI nem teste que
+  compare as respostas da API com `api.ts` do painel; uma resposta alterada só é
+  pega por revisão. Gerar o contrato e validá-lo com um teste de contrato é a
+  evolução natural.
 
 ---
 

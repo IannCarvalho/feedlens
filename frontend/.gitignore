@@ -1,9 +1,0 @@
-node_modules/
-dist/
-*.local
-.DS_Store
-*.tsbuildinfo
-node_modules/.tmp/
-# Emitidos pelo vue-tsc (composite) ao checar o vite.config.ts; não são fonte.
-vite.config.js
-vite.config.d.ts
