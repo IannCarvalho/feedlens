@@ -22,3 +22,4 @@ feedback-form/
 node_modules/
 frontend/node_modules/
 app/static/spa/
+frontend/

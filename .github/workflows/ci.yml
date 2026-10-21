@@ -131,8 +131,9 @@ jobs:
         run: npm run build
 
   docker:
-    # Builda a imagem de produção e confere que ela serve o painel: o front é
-    # compilado dentro do Dockerfile (estágio Node), não vem do repositório.
+    # Builda a imagem de produção e confere que ela serve o painel: o painel
+    # não vem deste repositório, o Dockerfile o baixa do release do
+    # feedlens-panel e recusa o build se o checksum não bater.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

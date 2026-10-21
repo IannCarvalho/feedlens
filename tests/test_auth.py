@@ -101,7 +101,7 @@ def test_login_page_explains_a_missing_build(secured_client, tmp_path):
     secured_client.application.static_folder = str(tmp_path)  # sem spa/index.html
     resp = secured_client.get("/login")
     assert resp.status_code == 503
-    assert b"npm" in resp.data
+    assert b"fetch_panel" in resp.data
 
 
 def test_login_page_redirects_when_already_authenticated(secured_client):
