@@ -3,7 +3,7 @@
 # Para atualizar: troque as DUAS linhas abaixo pelos valores do release novo
 # (o .sha256 do release traz o checksum) ou deixe o workflow panel-bump.yml
 # abrir o PR. O build FALHA se o checksum não bater com o arquivo baixado.
-ARG PANEL_VERSION=0.1.0
+ARG PANEL_VERSION=0.1.1
 ARG PANEL_SHA256=fb5f3f40b5e6b67e46f963f713fa08d4c9a367c19effd50cb74d3380a6a7b71b
 
 
