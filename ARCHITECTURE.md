@@ -225,6 +225,14 @@ Decisões por trás disso:
   tentativas). Já uma resposta que chegou mas não vira JSON válido **não** aciona o
   fallback: o feedback fica "não analisado" (`invalid_response`). Com o principal
   falhando, a análise pode levar bem mais que 30 s antes de cair no reserva.
+- **Chave do cofre recusada sai da cadeia.** Uma falha `auth` (401/403) numa
+  análise real grava `last_error_kind = "auth"` na linha do cofre, e ela deixa de
+  ser tentada. Sem isso, uma chave vencida pagava uma chamada falha em **todo**
+  feedback antes de cair na reserva, enquanto a tela de Provedores continuava
+  mostrando a última verificação sem erro (o registro só acontecia no botão
+  "testar"). A linha volta à cadeia no próximo teste bem-sucedido ou quando a
+  chave é trocada. `rate_limit`, `timeout` e `connection` não tiram a chave: são
+  passageiros e a próxima chamada pode dar certo.
 - **O BYOK por requisição não cai no servidor.** Quem trouxe a chave paga a
   chamada, e a falha dela volta como erro (`422`/`502`) em vez de ser mascarada. Nada
   é gravado, para o mesmo `id` poder ser reenviado.
