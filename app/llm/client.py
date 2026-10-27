@@ -94,7 +94,7 @@ def _notify_failure(hook: Callable[[Credential, Attempt], None],
     """Avisa quem observa a falha sem poder quebrá-la.
 
     O gancho existe para a cadeia registrar no banco a chave que o provedor
-    recusou (``credential_store.record_auth_failure``). Contabilidade nunca
+    recusou (``credential_store.record_permanent_failure``). Contabilidade nunca
     pode derrubar a análise: qualquer erro do gancho morre aqui.
     """
     try:
@@ -113,6 +113,7 @@ def complete(
     max_retries: int = 2,
     max_tokens: Optional[int] = None,
     on_failure: Optional[Callable[[Credential, 'Attempt'], None]] = None,
+    validate_content: Optional[Callable[[str], bool]] = None,
 ) -> Completion:
     """Executa a conversa no primeiro provedor da cadeia que responder.
 
@@ -120,12 +121,24 @@ def complete(
     próxima credencial — inclusive quando uma reserva acaba respondendo. É por
     ali que a chave recusada por autenticação é marcada no banco, para não ser
     tentada de novo em todo feedback.
+
+    ``validate_content`` diz se a resposta serve para quem chamou (o analisador
+    passa o parser de JSON). Uma resposta que chega mas não serve conta como
+    falha daquela credencial e a cadeia segue: um provedor que responde prosa
+    não pode deixar o feedback sem análise enquanto a reserva responderia.
     """
     if not chain:
         raise LLMNotConfiguredError()
 
     litellm = get_litellm()
     attempts: list[Attempt] = []
+
+    def fail(credential: Credential, kind: str, detail: str) -> None:
+        attempt = Attempt(credential.model_ref, kind, detail)
+        attempts.append(attempt)
+        if on_failure is not None:
+            _notify_failure(on_failure, credential, attempt)
+
     for credential in chain:
         started = time.perf_counter()
         options: dict[str, Any] = {}
@@ -149,20 +162,34 @@ def complete(
                 **options,
             )
         except Exception as e:  # noqa: BLE001 - toda falha segue para o próximo provedor
-            attempt = Attempt(credential.model_ref, _classify(litellm, e),
-                              _redact(str(e), credential.api_key))
-            attempts.append(attempt)
+            kind = _classify(litellm, e)
+            detail = _redact(str(e), credential.api_key)
             logger.warning('LLM call to %s failed (%s): %s',
-                           attempt.model_ref, attempt.kind, attempt.detail[:200])
-            if on_failure is not None:
-                _notify_failure(on_failure, credential, attempt)
+                           credential.model_ref, kind, detail[:200])
+            fail(credential, kind, detail)
             continue
 
         content = (response.choices[0].message.content or '').strip()
         if not content:
-            attempts.append(Attempt(credential.model_ref, 'empty', 'resposta vazia'))
             logger.warning('LLM %s returned an empty response', credential.model_ref)
+            fail(credential, 'empty', 'resposta vazia')
             continue
+
+        if validate_content is not None:
+            try:
+                usable = bool(validate_content(content))
+            except Exception:  # noqa: BLE001 - validador quebrado não derruba a análise
+                logger.exception('validate_content raised; response treated as unusable')
+                usable = False
+            if not usable:
+                # A resposta chegou, mas não serve. Tentar a próxima credencial
+                # custa uma chamada; não tentar custa o feedback, que ficaria
+                # "não analisado" mesmo com uma reserva capaz de responder.
+                logger.warning('LLM %s returned an unusable response '
+                               '(invalid_response); trying the next credential',
+                               credential.model_ref)
+                fail(credential, 'invalid_response', 'resposta não serve ao chamador')
+                continue
 
         usage = getattr(response, 'usage', None)
         completion = Completion(

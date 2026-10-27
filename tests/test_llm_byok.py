@@ -224,6 +224,42 @@ def test_a_broken_failure_hook_cannot_break_the_chain():
     assert _complete_with(fake, on_failure=boom).model_ref == "openai/gpt-4o-mini"
 
 
+# --- validação do conteúdo: resposta que não serve passa para a próxima --------
+
+def test_an_unusable_response_moves_on_to_the_next_credential():
+    fake = FakeLiteLLM(['desculpe, não posso ajudar', '{"ok": true}'])
+    result = _complete_with(fake, validate_content=lambda c: c.startswith("{"))
+    assert result.model_ref == "openai/gpt-4o-mini"
+    assert [call["model"] for call in fake.calls] == [
+        "anthropic/claude-haiku-4-5", "openai/gpt-4o-mini"]
+
+
+def test_the_invalid_content_is_reported_to_the_hook():
+    fake = FakeLiteLLM(['prosa', '{"ok": true}'])
+    seen = []
+    _complete_with(fake, validate_content=lambda c: c.startswith("{"),
+                   on_failure=lambda c, a: seen.append(a.kind))
+    assert seen == ["invalid_response"]
+
+
+def test_all_unusable_responses_raise_invalid_response():
+    fake = FakeLiteLLM(['prosa 1', 'prosa 2'])
+    with pytest.raises(LLMRequestError) as info:
+        _complete_with(fake, validate_content=lambda c: False)
+    assert [a.kind for a in info.value.attempts] == ["invalid_response", "invalid_response"]
+
+
+def test_a_broken_validator_counts_as_unusable():
+    """Validador que levanta vira invalid_response, não exceção para o chamador."""
+    def boom(content):
+        raise ValueError("parser quebrado")
+
+    fake = FakeLiteLLM(['x', 'y'])
+    with pytest.raises(LLMRequestError) as info:
+        _complete_with(fake, validate_content=boom)
+    assert [a.kind for a in info.value.attempts] == ["invalid_response", "invalid_response"]
+
+
 # --- contrato com o LiteLLM real (sem rede) ------------------------------------
 
 def test_contract_real_litellm_accepts_our_call():

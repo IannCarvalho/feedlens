@@ -25,9 +25,10 @@ logger = logging.getLogger(__name__)
 # Teto de chaves salvas: a tela é de uso humano e cada linha entra na cadeia.
 MAX_STORED_CREDENTIALS = 20
 
-# Kind de falha em que a chave sai da cadeia até um novo teste: o provedor
-# recusou a credencial (401/403) e insistir não tem como dar certo.
-AUTH_ERROR_KIND = 'auth'
+# Falhas em que a credencial sai da cadeia até um novo teste: o provedor
+# recusou a chave (401/403) ou o modelo não existe na conta (404). Insistir
+# não resolve e só custa uma chamada falha por feedback.
+PERMANENT_ERROR_KINDS = frozenset({'auth', 'not_found'})
 
 
 class DuplicateCredentialError(Exception):
@@ -171,37 +172,39 @@ def to_credential(row: ProviderCredential, vault: Vault) -> Credential:
         source='stored', stored_id=str(row.id))
 
 
-def record_auth_failure(credential: Credential, attempt: Attempt) -> None:
-    """Marca no banco a chave que o provedor recusou durante uma chamada real.
+def record_permanent_failure(credential: Credential, attempt: Attempt) -> None:
+    """Marca no banco a chave que falhou de um jeito que não se resolve sozinho.
 
-    Só ``auth`` (401/403) é registrado: é a única falha que não melhora
-    sozinha. Sem isso, uma chave vencida continuava sendo tentada em TODO
-    feedback, gastando uma chamada falha (e a latência dela) antes de cair na
-    reserva, enquanto a tela de Provedores mostrava a última verificação sem
-    erro. Marcada, a linha sai de ``stored_chain`` até um teste (tela de
-    Provedores) ou uma chave nova limpar o estado.
+    Dois casos, os de ``PERMANENT_ERROR_KINDS``: ``auth`` (401/403, chave
+    vencida ou revogada) e ``not_found`` (404, modelo que não existe mais na
+    conta — inclusive aposentado pelo provedor). Insistir neles só gasta uma
+    chamada falha (e a latência dela) antes de cair na reserva, enquanto a tela
+    de Provedores mostra a última verificação sem erro. Marcada, a linha sai de
+    ``stored_chain`` até um teste (tela de Provedores) ou uma chave nova limpar
+    o estado.
 
     Rate limit, timeout e conexão são passageiros e continuam na cadeia.
     Nunca levanta: contabilidade não pode derrubar a análise.
     """
-    if (attempt.kind != AUTH_ERROR_KIND or credential.source != 'stored'
+    if (attempt.kind not in PERMANENT_ERROR_KINDS or credential.source != 'stored'
             or not credential.stored_id or not has_app_context()):
         return
     try:
         row = db.session.get(ProviderCredential, uuid.UUID(credential.stored_id))
-        if row is None or row.last_error_kind == AUTH_ERROR_KIND:
+        if row is None or row.last_error_kind == attempt.kind:
             return
         row.last_verified_at = None
-        row.last_error_kind = AUTH_ERROR_KIND
+        row.last_error_kind = attempt.kind
         db.session.commit()
     except (SQLAlchemyError, ValueError):
         db.session.rollback()
-        logger.warning('Could not record the auth failure of %s; the chain is '
-                       'unchanged.', credential.model_ref, exc_info=True)
+        logger.warning('Could not record the %s failure of %s; the chain is '
+                       'unchanged.', attempt.kind, credential.model_ref, exc_info=True)
         return
-    # Só o modelo e o final da chave: nada de credencial em log.
-    logger.warning('Provider refused the stored key %s (%s); it leaves the chain '
-                   'until a new test.', credential.model_ref, row.key_hint)
+    # Só o modelo, o motivo e o final da chave: nada de credencial em log.
+    logger.warning('Stored key %s (%s) failed with %s; it leaves the chain '
+                   'until a new test.', credential.model_ref, row.key_hint,
+                   attempt.kind)
 
 
 def stored_chain() -> list[Credential]:
@@ -224,11 +227,11 @@ def stored_chain() -> list[Credential]:
                        exc_info=True)
         return []
     for row in rows:
-        if row.last_error_kind == AUTH_ERROR_KIND:
-            # O provedor já recusou esta chave numa chamada real. Tentar de
-            # novo só gastaria uma chamada falha antes da reserva.
-            logger.debug('Stored key %s/%s (id=%s) was refused by the provider; '
-                         'skipped until a new test.', row.provider, row.model, row.id)
+        if row.last_error_kind in PERMANENT_ERROR_KINDS:
+            # O provedor já recusou esta chave (ou o modelo) numa chamada real.
+            # Tentar de novo só gastaria uma chamada falha antes da reserva.
+            logger.debug('Stored key %s/%s (id=%s) failed with %s; skipped until a '
+                         'new test.', row.provider, row.model, row.id, row.last_error_kind)
             continue
         try:
             chain.append(to_credential(row, vault))
