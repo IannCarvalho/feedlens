@@ -4,6 +4,7 @@ A camada de LLM é mockada (``app.routes.settings_api.complete`` e
 ``app.services.feedback_analyzer.complete``): nenhum teste faz rede.
 """
 import json
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -11,8 +12,9 @@ from cryptography.fernet import Fernet
 from sqlalchemy.exc import OperationalError
 
 from app import create_app, db
-from app.llm import Completion, LLMRequestError
+from app.llm import Completion, Credential, LLMRequestError
 from app.llm.errors import Attempt
+from app.llm.providers import PROVIDERS
 from app.llm.vault import Vault, VaultDecryptError, VaultDisabledError, key_hint, parse_fernet_keys
 from app.models.provider_credential import ProviderCredential
 from app.services import credential_store as store
@@ -437,6 +439,116 @@ def test_analyzer_uses_stored_keys_before_environment_keys(secured_app):
     assert [c.model_ref for c in chain] == ["anthropic/claude-haiku-4-5", "openai/gpt-4o-mini"]
     assert chain[0].api_key == ANTHROPIC_KEY
     assert result["analyzed_by"] == "anthropic/claude-haiku-4-5"
+
+
+# ------------------------------------------- chave recusada sai da cadeia
+
+ANSWER = json.dumps({"sentiment": "POSITIVO", "is_spam": False, "requested_features": []})
+
+
+class _FakeLiteLLM:
+    """LiteLLM falso: falha as primeiras ``failures`` chamadas e depois responde."""
+
+    class AuthenticationError(Exception):
+        """Equivale ao 401/403 do provedor."""
+
+    class RateLimitError(Exception):
+        """Equivale ao 429 (passageiro)."""
+
+    def __init__(self, failures=0, error=None):
+        self.failures = failures
+        self.error = error or self.AuthenticationError("chave expirada")
+        self.models = []
+
+    def completion(self, **kwargs):
+        self.models.append(kwargs["model"])
+        if self.failures:
+            self.failures -= 1
+            raise self.error
+        message = SimpleNamespace(content=ANSWER)
+        usage = SimpleNamespace(prompt_tokens=5, completion_tokens=5)
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)], usage=usage)
+
+    def completion_cost(self, completion_response):
+        return 0.0
+
+
+# ``_classify`` pergunta por todas estas classes ao LiteLLM; sem elas o fake
+# quebraria com AttributeError em vez de classificar a falha.
+for _name in ("PermissionDeniedError", "Timeout", "NotFoundError", "BadRequestError",
+              "UnprocessableEntityError", "APIConnectionError", "ServiceUnavailableError",
+              "InternalServerError"):
+    setattr(_FakeLiteLLM, _name, type(_name, (Exception,), {}))
+
+
+def _two_keys(secured_app):
+    """Chave salva (principal) e uma do ambiente (reserva)."""
+    secured_app.config.update(ANTHROPIC_API_KEY="sk-ant-env-key-123456", LLM_MODELS=[])
+    return _store("openai", "gpt-4o-mini", OPENAI_KEY, priority=1)
+
+
+def test_an_auth_refusal_takes_the_stored_key_out_of_the_chain(secured_app):
+    """A falha real (não o botão "testar") já marca a chave: era o buraco.
+
+    Antes, o OpenRouter respondia 401 em TODO feedback, o Groq respondia por
+    baixo e a tela de Provedores continuava mostrando a última verificação sem
+    erro. Agora a chamada seguinte já não tenta a chave recusada.
+    """
+    row = _two_keys(secured_app)
+    refusing = _FakeLiteLLM(failures=1)
+
+    with patch("app.llm.client.get_litellm", return_value=refusing):
+        first = FeedbackAnalyzer().analyze_feedback("adorei o app")
+
+    assert refusing.models == ["openai/gpt-4o-mini", "anthropic/claude-haiku-4-5"]
+    assert first["analyzed_by"] == "anthropic/claude-haiku-4-5"  # a reserva respondeu
+
+    db.session.refresh(row)
+    assert (row.last_error_kind, row.last_verified_at) == ("auth", None)
+
+    after = _FakeLiteLLM()
+    with patch("app.llm.client.get_litellm", return_value=after):
+        FeedbackAnalyzer().analyze_feedback("outro feedback")
+    assert after.models == ["anthropic/claude-haiku-4-5"]  # a recusada não é tentada
+
+
+def test_a_successful_retest_puts_the_key_back_in_the_chain(secured_app):
+    row = _two_keys(secured_app)
+    with patch("app.llm.client.get_litellm", return_value=_FakeLiteLLM(failures=1)):
+        FeedbackAnalyzer().analyze_feedback("adorei o app")
+    assert store.operator_chain()[0].model_ref == "anthropic/claude-haiku-4-5"
+
+    store.update_credential(row, verified=(True, None))
+
+    assert [c.model_ref for c in store.operator_chain()] == [
+        "openai/gpt-4o-mini", "anthropic/claude-haiku-4-5"]
+
+
+def test_a_transient_failure_keeps_the_stored_key_in_the_chain(secured_app):
+    """Cota e timeout passam sozinhos; tirar a chave por isso seria errado."""
+    row = _two_keys(secured_app)
+    refusing = _FakeLiteLLM(failures=1, error=_FakeLiteLLM.RateLimitError("cota"))
+
+    with patch("app.llm.client.get_litellm", return_value=refusing):
+        FeedbackAnalyzer().analyze_feedback("adorei o app")
+
+    db.session.refresh(row)
+    assert (row.last_error_kind, row.last_verified_at) == (None, None)
+    assert store.operator_chain()[0].model_ref == "openai/gpt-4o-mini"
+
+
+def test_a_byok_refusal_never_touches_a_stored_key(secured_app):
+    """A chave do cliente não é uma linha do banco e não pode derrubar a do operador."""
+    row = _two_keys(secured_app)
+    byok = Credential(PROVIDERS["groq"], "openai/gpt-oss-20b", "gsk-do-cliente-123", "request")
+
+    with patch("app.llm.client.get_litellm", return_value=_FakeLiteLLM(failures=1)):
+        with pytest.raises(LLMRequestError):
+            FeedbackAnalyzer().analyze_feedback("adorei o app", credential=byok)
+
+    db.session.refresh(row)
+    assert (row.last_error_kind, row.last_verified_at) == (None, None)
+
 
 
 # ------------------------------------------------------------------------- cli

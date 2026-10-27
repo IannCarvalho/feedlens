@@ -12,7 +12,7 @@ from app.llm import (
     complete,
     llm_settings,
 )
-from app.services.credential_store import operator_chain
+from app.services.credential_store import operator_chain, record_auth_failure
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +186,9 @@ class FeedbackAnalyzer:
                 json_mode=True,
                 timeout=settings.get("LLM_TIMEOUT", 30),
                 max_retries=settings.get("LLM_MAX_RETRIES", 2),
+                # Uma chave salva recusada (401/403) sai da cadeia na hora: sem
+                # isso, todo feedback pagava uma chamada falha antes da reserva.
+                on_failure=record_auth_failure,
             )
         except LLMRequestError as e:
             if credential is not None:

@@ -10,7 +10,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from app.llm.credentials import Credential
 from app.llm.errors import Attempt, LLMNotConfiguredError, LLMRequestError
@@ -89,6 +89,20 @@ def _cost(litellm: Any, response: Any) -> Optional[float]:
         return None
 
 
+def _notify_failure(hook: Callable[[Credential, Attempt], None],
+                    credential: Credential, attempt: Attempt) -> None:
+    """Avisa quem observa a falha sem poder quebrá-la.
+
+    O gancho existe para a cadeia registrar no banco a chave que o provedor
+    recusou (``credential_store.record_auth_failure``). Contabilidade nunca
+    pode derrubar a análise: qualquer erro do gancho morre aqui.
+    """
+    try:
+        hook(credential, attempt)
+    except Exception:  # noqa: BLE001 - observador, jamais o caminho crítico
+        logger.exception('LLM failure hook raised; the chain continues')
+
+
 def complete(
     messages: list[dict],
     chain: list[Credential],
@@ -98,8 +112,15 @@ def complete(
     timeout: int = 30,
     max_retries: int = 2,
     max_tokens: Optional[int] = None,
+    on_failure: Optional[Callable[[Credential, 'Attempt'], None]] = None,
 ) -> Completion:
-    """Executa a conversa no primeiro provedor da cadeia que responder."""
+    """Executa a conversa no primeiro provedor da cadeia que responder.
+
+    ``on_failure`` é chamado a cada tentativa que falha, antes de passar para a
+    próxima credencial — inclusive quando uma reserva acaba respondendo. É por
+    ali que a chave recusada por autenticação é marcada no banco, para não ser
+    tentada de novo em todo feedback.
+    """
     if not chain:
         raise LLMNotConfiguredError()
 
@@ -133,6 +154,8 @@ def complete(
             attempts.append(attempt)
             logger.warning('LLM call to %s failed (%s): %s',
                            attempt.model_ref, attempt.kind, attempt.detail[:200])
+            if on_failure is not None:
+                _notify_failure(on_failure, credential, attempt)
             continue
 
         content = (response.choices[0].message.content or '').strip()
