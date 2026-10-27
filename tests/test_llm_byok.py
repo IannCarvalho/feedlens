@@ -203,6 +203,27 @@ def test_empty_chain_is_not_configured():
         complete(MESSAGES, [])
 
 
+# --- gancho de falha: a cadeia avisa cada tentativa que caiu -------------------
+
+def test_the_failure_hook_sees_every_failed_attempt():
+    """Avisa mesmo quando uma reserva acaba respondendo: é o caso do 401 real."""
+    fake = FakeLiteLLM([FakeLiteLLM.AuthenticationError("chave expirada"), '{"ok": true}'])
+    seen = []
+    result = _complete_with(fake, on_failure=lambda c, a: seen.append((c.model_ref, a.kind)))
+
+    assert seen == [("anthropic/claude-haiku-4-5", "auth")]
+    assert result.model_ref == "openai/gpt-4o-mini"
+
+
+def test_a_broken_failure_hook_cannot_break_the_chain():
+    """Contabilidade nunca derruba a análise."""
+    def boom(credential, attempt):
+        raise RuntimeError("gancho quebrado")
+
+    fake = FakeLiteLLM([FakeLiteLLM.AuthenticationError("x"), '{"ok": true}'])
+    assert _complete_with(fake, on_failure=boom).model_ref == "openai/gpt-4o-mini"
+
+
 # --- contrato com o LiteLLM real (sem rede) ------------------------------------
 
 def test_contract_real_litellm_accepts_our_call():

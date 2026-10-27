@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from app import db
 from app.llm import Credential, llm_settings, server_chain
+from app.llm.errors import Attempt
 from app.llm.providers import get_provider, validate_model_name
 from app.llm.vault import Vault, VaultDecryptError, key_hint
 from app.models.provider_credential import ProviderCredential
@@ -23,6 +24,10 @@ logger = logging.getLogger(__name__)
 
 # Teto de chaves salvas: a tela é de uso humano e cada linha entra na cadeia.
 MAX_STORED_CREDENTIALS = 20
+
+# Kind de falha em que a chave sai da cadeia até um novo teste: o provedor
+# recusou a credencial (401/403) e insistir não tem como dar certo.
+AUTH_ERROR_KIND = 'auth'
 
 
 class DuplicateCredentialError(Exception):
@@ -163,7 +168,40 @@ def to_credential(row: ProviderCredential, vault: Vault) -> Credential:
     """Decifra uma linha para uso na cadeia (chave só em memória)."""
     return Credential(
         get_provider(row.provider), row.model, vault.decrypt(row.encrypted_key),
-        source='stored')
+        source='stored', stored_id=str(row.id))
+
+
+def record_auth_failure(credential: Credential, attempt: Attempt) -> None:
+    """Marca no banco a chave que o provedor recusou durante uma chamada real.
+
+    Só ``auth`` (401/403) é registrado: é a única falha que não melhora
+    sozinha. Sem isso, uma chave vencida continuava sendo tentada em TODO
+    feedback, gastando uma chamada falha (e a latência dela) antes de cair na
+    reserva, enquanto a tela de Provedores mostrava a última verificação sem
+    erro. Marcada, a linha sai de ``stored_chain`` até um teste (tela de
+    Provedores) ou uma chave nova limpar o estado.
+
+    Rate limit, timeout e conexão são passageiros e continuam na cadeia.
+    Nunca levanta: contabilidade não pode derrubar a análise.
+    """
+    if (attempt.kind != AUTH_ERROR_KIND or credential.source != 'stored'
+            or not credential.stored_id or not has_app_context()):
+        return
+    try:
+        row = db.session.get(ProviderCredential, uuid.UUID(credential.stored_id))
+        if row is None or row.last_error_kind == AUTH_ERROR_KIND:
+            return
+        row.last_verified_at = None
+        row.last_error_kind = AUTH_ERROR_KIND
+        db.session.commit()
+    except (SQLAlchemyError, ValueError):
+        db.session.rollback()
+        logger.warning('Could not record the auth failure of %s; the chain is '
+                       'unchanged.', credential.model_ref, exc_info=True)
+        return
+    # Só o modelo e o final da chave: nada de credencial em log.
+    logger.warning('Provider refused the stored key %s (%s); it leaves the chain '
+                   'until a new test.', credential.model_ref, row.key_hint)
 
 
 def stored_chain() -> list[Credential]:
@@ -186,6 +224,12 @@ def stored_chain() -> list[Credential]:
                        exc_info=True)
         return []
     for row in rows:
+        if row.last_error_kind == AUTH_ERROR_KIND:
+            # O provedor já recusou esta chave numa chamada real. Tentar de
+            # novo só gastaria uma chamada falha antes da reserva.
+            logger.debug('Stored key %s/%s (id=%s) was refused by the provider; '
+                         'skipped until a new test.', row.provider, row.model, row.id)
+            continue
         try:
             chain.append(to_credential(row, vault))
         except VaultDecryptError:

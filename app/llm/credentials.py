@@ -43,6 +43,10 @@ class Credential:
     model: str
     api_key: str = field(repr=False)
     source: str = 'server'  # 'request' (BYOK do cliente) | 'stored' (cofre) | 'server' (env)
+    # Id da linha em ``provider_credentials`` quando source='stored'. É o que
+    # permite registrar no banco que o provedor recusou a chave sem que esta
+    # camada (pura, sem app context) conheça o modelo nem a sessão do banco.
+    stored_id: Optional[str] = None
 
     @property
     def model_ref(self) -> str:
