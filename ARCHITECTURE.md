@@ -219,20 +219,22 @@ Decisões por trás disso:
   exceto em Groq e OpenRouter, cujos catálogos têm ids `fabricante/modelo` (uma
   barra só). Assim `openrouter/google/gemma-4-31b-it:free` é o provedor
   `openrouter` com o modelo `google/gemma-4-31b-it:free`.
-- **Fallback por falha de chamada, não por resposta ruim.** Cota, timeout, conexão,
-  chave recusada, modelo inexistente e resposta vazia passam para a próxima
-  credencial, cada uma com `LLM_TIMEOUT` e `LLM_MAX_RETRIES` (padrão 30 s e 2 novas
-  tentativas). Já uma resposta que chegou mas não vira JSON válido **não** aciona o
-  fallback: o feedback fica "não analisado" (`invalid_response`). Com o principal
-  falhando, a análise pode levar bem mais que 30 s antes de cair no reserva.
-- **Chave do cofre recusada sai da cadeia.** Uma falha `auth` (401/403) numa
-  análise real grava `last_error_kind = "auth"` na linha do cofre, e ela deixa de
-  ser tentada. Sem isso, uma chave vencida pagava uma chamada falha em **todo**
-  feedback antes de cair na reserva, enquanto a tela de Provedores continuava
-  mostrando a última verificação sem erro (o registro só acontecia no botão
-  "testar"). A linha volta à cadeia no próximo teste bem-sucedido ou quando a
-  chave é trocada. `rate_limit`, `timeout` e `connection` não tiram a chave: são
-  passageiros e a próxima chamada pode dar certo.
+- **Fallback por falha de chamada ou de conteúdo.** Cota, timeout, conexão, chave
+  recusada, modelo inexistente, resposta vazia e resposta que não vira JSON passam
+  para a próxima credencial, cada uma com `LLM_TIMEOUT` e `LLM_MAX_RETRIES` (padrão
+  30 s e 2 novas tentativas). A resposta só é aceita quando o chamador consegue usá-la
+  (`validate_content`): um provedor que responde prosa custa uma chamada extra, não o
+  feedback. Se **todas** as credenciais falharem assim, aí sim o feedback fica "não
+  analisado" (`invalid_response`). Com o principal falhando, a análise pode levar bem
+  mais que 30 s antes de cair no reserva.
+- **Chave do cofre que falha em definitivo sai da cadeia.** Uma falha `auth` (401/403)
+  ou `not_found` (404, modelo aposentado ou fora da conta) numa análise real grava
+  `last_error_kind` na linha do cofre, e ela deixa de ser tentada. Sem isso, uma chave
+  vencida pagava uma chamada falha em **todo** feedback antes de cair na reserva,
+  enquanto a tela de Provedores continuava mostrando a última verificação sem erro (o
+  registro só acontecia no botão "testar"). A linha volta à cadeia no próximo teste
+  bem-sucedido ou quando a chave/modelo é trocado. `rate_limit`, `timeout` e
+  `connection` não tiram a chave: são passageiros e a próxima chamada pode dar certo.
 - **O BYOK por requisição não cai no servidor.** Quem trouxe a chave paga a
   chamada, e a falha dela volta como erro (`422`/`502`) em vez de ser mascarada. Nada
   é gravado, para o mesmo `id` poder ser reenviado.

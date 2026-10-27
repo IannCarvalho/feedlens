@@ -455,9 +455,10 @@ class _FakeLiteLLM:
     class RateLimitError(Exception):
         """Equivale ao 429 (passageiro)."""
 
-    def __init__(self, failures=0, error=None):
+    def __init__(self, failures=0, error=None, answers=None):
         self.failures = failures
         self.error = error or self.AuthenticationError("chave expirada")
+        self.answers = list(answers or [ANSWER])
         self.models = []
 
     def completion(self, **kwargs):
@@ -465,7 +466,8 @@ class _FakeLiteLLM:
         if self.failures:
             self.failures -= 1
             raise self.error
-        message = SimpleNamespace(content=ANSWER)
+        content = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
+        message = SimpleNamespace(content=content)
         usage = SimpleNamespace(prompt_tokens=5, completion_tokens=5)
         return SimpleNamespace(choices=[SimpleNamespace(message=message)], usage=usage)
 
@@ -535,6 +537,48 @@ def test_a_transient_failure_keeps_the_stored_key_in_the_chain(secured_app):
     db.session.refresh(row)
     assert (row.last_error_kind, row.last_verified_at) == (None, None)
     assert store.operator_chain()[0].model_ref == "openai/gpt-4o-mini"
+
+
+def test_a_retired_model_takes_the_stored_key_out_of_the_chain(secured_app):
+    """404 é definitivo como o 401: insistir gastaria uma chamada falha por feedback."""
+    row = _two_keys(secured_app)
+    retired = _FakeLiteLLM(failures=1, error=_FakeLiteLLM.NotFoundError("modelo aposentado"))
+
+    with patch("app.llm.client.get_litellm", return_value=retired):
+        FeedbackAnalyzer().analyze_feedback("adorei o app")
+
+    db.session.refresh(row)
+    assert (row.last_error_kind, row.last_verified_at) == ("not_found", None)
+    assert store.operator_chain()[0].model_ref == "anthropic/claude-haiku-4-5"
+
+
+def test_a_prose_answer_falls_back_instead_of_losing_the_feedback(secured_app):
+    """Provedor que responde prosa não pode custar o feedback: a reserva assume."""
+    row = _two_keys(secured_app)
+    prose_then_json = _FakeLiteLLM(answers=["Não consigo ajudar com isso.", ANSWER])
+
+    with patch("app.llm.client.get_litellm", return_value=prose_then_json):
+        result = FeedbackAnalyzer().analyze_feedback("adorei o app")
+
+    assert prose_then_json.models == ["openai/gpt-4o-mini", "anthropic/claude-haiku-4-5"]
+    assert result["failure"] is None
+    assert result["analyzed_by"] == "anthropic/claude-haiku-4-5"
+
+    # Resposta ruim não é falha permanente: a chave continua na cadeia.
+    db.session.refresh(row)
+    assert (row.last_error_kind, row.last_verified_at) == (None, None)
+
+
+def test_every_credential_answering_prose_still_marks_the_feedback(secured_app):
+    """Se ninguém serve, o motivo é invalid_response e o feedback fica pendente."""
+    _two_keys(secured_app)
+    all_prose = _FakeLiteLLM(answers=["prosa", "outra prosa"])
+
+    with patch("app.llm.client.get_litellm", return_value=all_prose):
+        result = FeedbackAnalyzer().analyze_feedback("adorei o app")
+
+    assert result["failure"] == "invalid_response"
+    assert result["analyzed_by"] is None
 
 
 def test_a_byok_refusal_never_touches_a_stored_key(secured_app):
