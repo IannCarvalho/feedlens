@@ -75,6 +75,19 @@ def test_session_token_is_stable_within_a_session(secured_client):
     assert csrf_token(secured_client) == csrf_token(secured_client)
 
 
+def test_session_reports_no_analysis_without_any_key(client):
+    """Clone limpo (sem chave de ambiente nem cofre): análise não configurada."""
+    body = client.get("/auth/session").get_json()
+    assert body["analysis_configured"] is False
+
+
+def test_session_reports_analysis_configured_with_env_key(app):
+    """Uma chave de provedor no ambiente já faz o flag virar True."""
+    app.config.update(OPENAI_API_KEY="sk-fake-para-o-flag")
+    body = app.test_client().get("/auth/session").get_json()
+    assert body["analysis_configured"] is True
+
+
 def test_panel_session_routes_are_not_part_of_the_public_cors_api(secured_client):
     """/auth/session e /login são internos ao painel: sem CORS, ao contrário de /api/*."""
     origin = {"Origin": "https://evil.example.com"}

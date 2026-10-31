@@ -1070,12 +1070,19 @@ components:
 
     SessionResponse:
       type: object
-      required: [auth_enabled, authenticated, csrf_token]
+      required: [auth_enabled, authenticated, analysis_configured, csrf_token]
       properties:
         auth_enabled:
           type: boolean
         authenticated:
           type: boolean
+        analysis_configured:
+          type: boolean
+          description: >-
+            Ha ao menos uma credencial de LLM utilizavel no servidor (chave de
+            ambiente ou chave salva no cofre). So um booleano: nao revela quais
+            provedores nem nenhuma chave. O painel usa isto para avisar quando
+            nenhum provedor esta configurado.
         csrf_token:
           type: string
       additionalProperties: false
