@@ -18,7 +18,12 @@ class Attempt:
     """Uma tentativa falha na cadeia de provedores (mensagem já sem a chave)."""
 
     model_ref: str
-    kind: str      # auth | rate_limit | timeout | connection | not_found | bad_request | empty | error
+    # Valores possíveis, na ordem em que a cadeia os produz:
+    #   - de _classify() ao capturar a exceção do provedor: auth | rate_limit |
+    #     timeout | not_found | bad_request | connection | error (fallback);
+    #   - de complete() ao avaliar a resposta recebida: empty (resposta vazia) |
+    #     invalid_response (chegou, mas não serve ao validate_content do chamador).
+    kind: str
     detail: str
 
 
