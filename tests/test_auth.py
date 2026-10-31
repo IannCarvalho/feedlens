@@ -75,15 +75,35 @@ def test_session_token_is_stable_within_a_session(secured_client):
     assert csrf_token(secured_client) == csrf_token(secured_client)
 
 
-def test_session_reports_no_analysis_without_any_key(client):
-    """Clone limpo (sem chave de ambiente nem cofre): análise não configurada."""
-    body = client.get("/auth/session").get_json()
+def test_session_reports_no_analysis_without_any_key(app):
+    """Sem nenhuma chave (ambiente ou cofre): análise não configurada.
+
+    Zera as chaves no config em vez de confiar no ambiente: o job Postgres do
+    CI exporta OPENAI_API_KEY, então o estado "clone limpo" tem de ser forçado
+    aqui para o teste valer em qualquer ambiente.
+    """
+    app.config.update(
+        OPENAI_API_KEY=None,
+        ANTHROPIC_API_KEY=None,
+        GEMINI_API_KEY=None,
+        GROQ_API_KEY=None,
+        OPENROUTER_API_KEY=None,
+        LLM_MODELS=[],
+    )
+    body = app.test_client().get("/auth/session").get_json()
     assert body["analysis_configured"] is False
 
 
 def test_session_reports_analysis_configured_with_env_key(app):
     """Uma chave de provedor no ambiente já faz o flag virar True."""
-    app.config.update(OPENAI_API_KEY="sk-fake-para-o-flag")
+    app.config.update(
+        OPENAI_API_KEY="sk-fake-para-o-flag",
+        ANTHROPIC_API_KEY=None,
+        GEMINI_API_KEY=None,
+        GROQ_API_KEY=None,
+        OPENROUTER_API_KEY=None,
+        LLM_MODELS=[],
+    )
     body = app.test_client().get("/auth/session").get_json()
     assert body["analysis_configured"] is True
 
