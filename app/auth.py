@@ -147,12 +147,32 @@ def session_state():
     ``authenticated`` é "pode usar o painel" (logado, ou login desligado), a
     mesma regra do ``login_required``. Fica fora de ``/api/*`` de propósito: é
     interna ao painel (mesma origem) e não entra no CORS da API pública.
+
+    ``analysis_configured`` diz se há ALGUMA análise de IA possível no servidor
+    (chave de ambiente ou chave salva no cofre). É só um booleano: não revela
+    quais provedores nem nenhuma chave, e serve para o painel avisar quando
+    nenhum provedor está configurado. Nunca derruba a rota: qualquer erro ao
+    resolver a cadeia (ex.: banco indisponível) vira ``True`` para não assustar
+    com um alarme falso quando o estado real é desconhecido.
     """
     return _no_store(jsonify({
         'auth_enabled': auth_enabled(),
         'authenticated': is_authenticated(),
+        'analysis_configured': _analysis_configured(),
         'csrf_token': csrf_token(),
     }))
+
+
+def _analysis_configured() -> bool:
+    """True quando há ao menos uma credencial de LLM utilizável no servidor."""
+    # Import tardio: não carregar a camada de LLM só para responder a sessão.
+    from app.services.credential_store import operator_chain
+    try:
+        return len(operator_chain()) > 0
+    except Exception:  # noqa: BLE001 - sinal de UI, nunca o caminho crítico
+        # Estado desconhecido (ex.: banco fora): não dispara o aviso de
+        # "sem provedor", que seria um falso alarme.
+        return True
 
 
 @auth.route('/login', methods=['GET', 'POST'])
