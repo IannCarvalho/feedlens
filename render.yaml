@@ -1,0 +1,66 @@
+# Render Blueprint (infra como código) para o backend do FeedLens.
+#
+# Descreve o serviço web em vez de configurá-lo à mão no painel. Ao aplicar
+# este Blueprint (Render > New > Blueprint, apontando para este repo), o Render
+# cria/atualiza o serviço com estas opções.
+#
+# SEGREDOS NUNCA VÃO NESTE ARQUIVO: as variáveis marcadas `sync: false` ficam
+# fora do git. O Render pede o valor UMA vez no painel (Environment) e o guarda
+# lá; o Blueprint só declara que elas existem. É isso que impede o segredo de
+# vazar no histórico do repositório.
+#
+# A migração do banco roda ANTES de subir o servidor (`preDeployCommand`), o
+# que garante que as tabelas existem — sem isso, uma rota que lê uma tabela
+# ainda não migrada responde 500.
+services:
+  - type: web
+    name: feedlens
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    # Aplica as migrations do Alembic/Flask-Migrate antes de cada release.
+    # Flask-Migrate está nas dependências e FLASK_APP aponta para wsgi:app.
+    preDeployCommand: "flask db upgrade"
+    healthCheckPath: /health
+    envVars:
+      - key: FLASK_ENV
+        value: production
+      # Necessário para o `flask db upgrade` do preDeployCommand achar a app.
+      - key: FLASK_APP
+        value: wsgi:app
+
+      # --- SEGREDOS: geridos no painel do Render, nunca no git ---
+      # Defina o valor de cada um em Environment (uma vez). O boot recusa
+      # SECRET_KEY insegura em produção e FEEDLENS_ENCRYPTION_KEY que não seja
+      # uma chave Fernet válida (32 bytes em base64 urlsafe).
+      - key: SECRET_KEY
+        sync: false
+      - key: DASHBOARD_PASSWORD
+        sync: false
+      - key: FEEDLENS_ENCRYPTION_KEY
+        sync: false
+
+      # --- Banco ---
+      # Hoje o app cai no SQLite (sqlite:///feedlens.db) quando DATABASE_URL não
+      # existe. No Render free o disco é efêmero: o `flask db upgrade` acima
+      # recria as tabelas a cada deploy (resolve o 500), mas os DADOS não
+      # sobrevivem a um redeploy/hibernação. Para persistir, descomente o bloco
+      # `databases` abaixo e a env `DATABASE_URL` — o Render injeta a string de
+      # conexão do Postgres automaticamente.
+      # - key: DATABASE_URL
+      #   fromDatabase:
+      #     name: feedlens-db
+      #     property: connectionString
+
+      # --- Config não-secreta (pode ficar no git) ---
+      # Restrinja às origens reais em produção (o padrão do app é '*').
+      # - key: CORS_ORIGINS
+      #   value: https://SEU-FORM.vercel.app
+      # Origem do formulário público para ingestão sem chave (opt-in):
+      # - key: INGEST_PUBLIC_ORIGINS
+      #   value: https://SEU-FORM.vercel.app
+
+# Postgres gerenciado (descomente junto com a env DATABASE_URL acima):
+# databases:
+#   - name: feedlens-db
+#     plan: free
