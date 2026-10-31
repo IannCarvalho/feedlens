@@ -9,23 +9,22 @@
 # lá; o Blueprint só declara que elas existem. É isso que impede o segredo de
 # vazar no histórico do repositório.
 #
-# A migração do banco roda ANTES de subir o servidor (`preDeployCommand`), o
-# que garante que as tabelas existem — sem isso, uma rota que lê uma tabela
-# ainda não migrada responde 500.
+# A migração do banco roda no ARRANQUE do contêiner (docker/entrypoint.sh,
+# `flask db upgrade` antes do gunicorn), porque o free tier do Render NÃO
+# suporta pre-deploy command. Assim as tabelas existem antes de servir — sem
+# isso, uma rota que lê uma tabela ainda não migrada responde 500.
 services:
   - type: web
     name: feedlens
     runtime: docker
     plan: free
     dockerfilePath: ./Dockerfile
-    # Aplica as migrations do Alembic/Flask-Migrate antes de cada release.
-    # Flask-Migrate está nas dependências e FLASK_APP aponta para wsgi:app.
-    preDeployCommand: "flask db upgrade"
     healthCheckPath: /health
     envVars:
       - key: FLASK_ENV
         value: production
-      # Necessário para o `flask db upgrade` do preDeployCommand achar a app.
+      # Redundante com o ENV FLASK_APP do Dockerfile; mantido aqui como doc do
+      # que o entrypoint (flask db upgrade) usa para achar a app.
       - key: FLASK_APP
         value: wsgi:app
 
