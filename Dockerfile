@@ -48,6 +48,11 @@ COPY --from=panel /spa ./app/static/spa
 
 EXPOSE 5000
 
-# gunicorn servindo a app factory via wsgi:app; bind, workers e threads vêm
-# do gunicorn.conf.py (1 worker gthread, respeitando PORT/WEB_CONCURRENCY)
-CMD ["gunicorn", "wsgi:app"]
+# Entrypoint: aplica as migrations (flask db upgrade) e então sobe o gunicorn.
+# Feito no arranque do contêiner porque o free tier do Render não suporta
+# pre-deploy command. bind/workers/threads vêm do gunicorn.conf.py.
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+# FLASK_APP é necessário para o `flask db upgrade` do entrypoint achar a app.
+ENV FLASK_APP=wsgi:app
+CMD ["/usr/local/bin/entrypoint.sh"]
