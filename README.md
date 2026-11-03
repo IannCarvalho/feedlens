@@ -722,7 +722,9 @@ Restaurar um backup (precisa do `postgresql-client-18` e da `BACKUP_PASSPHRASE`)
 openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
   -pass env:BACKUP_PASSPHRASE \
   -in feedlens-AAAAMMDDThhmmssZ.dump.enc -out feedlens.dump
-# 3. Restaure num banco de destino (ATENÇÃO: --clean apaga os objetos existentes):
+# 3. Restaure num banco de destino (ATENÇÃO: --clean apaga os objetos existentes).
+#    Use o pg_restore 18: num Ubuntu com outra versão no PATH, chame
+#    /usr/lib/postgresql/18/bin/pg_restore pelo caminho absoluto.
 pg_restore --clean --no-owner --dbname "$TARGET_DATABASE_URL" feedlens.dump
 ```
 
