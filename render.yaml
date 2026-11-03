@@ -39,17 +39,15 @@ services:
       - key: FEEDLENS_ENCRYPTION_KEY
         sync: false
 
-      # --- Banco ---
-      # Hoje o app cai no SQLite (sqlite:///feedlens.db) quando DATABASE_URL não
-      # existe. No Render free o disco é efêmero: o `flask db upgrade` acima
-      # recria as tabelas a cada deploy (resolve o 500), mas os DADOS não
-      # sobrevivem a um redeploy/hibernação. Para persistir, descomente o bloco
-      # `databases` abaixo e a env `DATABASE_URL` — o Render injeta a string de
-      # conexão do Postgres automaticamente.
-      # - key: DATABASE_URL
-      #   fromDatabase:
-      #     name: feedlens-db
-      #     property: connectionString
+      # --- Banco: Postgres no Neon (free, sem prazo de expiração) ---
+      # Cole aqui a connection string do Neon (Dashboard > Connect), no formato
+      # postgresql://USUARIO:SENHA@HOST/BANCO?sslmode=require. É segredo: fica
+      # só no painel do Render. Sem ela o app cai no SQLite efêmero do
+      # contêiner (os dados somem a cada deploy/hibernação). O Postgres free
+      # do próprio Render foi descartado: expira 30 dias após a criação.
+      # As tabelas são criadas pelo `flask db upgrade` do entrypoint.
+      - key: DATABASE_URL
+        sync: false
 
       # --- Config não-secreta (pode ficar no git) ---
       # Restrinja às origens reais em produção (o padrão do app é '*').
@@ -58,8 +56,3 @@ services:
       # Origem do formulário público para ingestão sem chave (opt-in):
       # - key: INGEST_PUBLIC_ORIGINS
       #   value: https://SEU-FORM.vercel.app
-
-# Postgres gerenciado (descomente junto com a env DATABASE_URL acima):
-# databases:
-#   - name: feedlens-db
-#     plan: free

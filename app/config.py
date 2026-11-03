@@ -34,6 +34,35 @@ def get_env_list(key: str, default: List[str] = None, separator: str = ',') -> L
     return [item.strip() for item in value.split(separator) if item.strip()]
 
 
+def normalize_database_url(url: str) -> str:
+    """Troca o esquema ``postgres://`` por ``postgresql://``.
+
+    Alguns provedores ainda entregam a string no esquema antigo, que o
+    SQLAlchemy 1.4+ recusa. Qualquer outro esquema passa sem mudança.
+    """
+    if url.startswith('postgres://'):
+        return 'postgresql://' + url[len('postgres://'):]
+    return url
+
+
+# Reciclagem das conexões do pool (s). O Neon free suspende o compute após 5 min
+# sem uso e derruba as conexões abertas; reciclar nesse prazo evita entregar ao
+# request uma conexão já morta.
+POSTGRES_POOL_RECYCLE_SECONDS = 300
+
+
+def database_engine_options(url: str) -> dict:
+    """Opções do engine do SQLAlchemy conforme o banco.
+
+    Postgres gerenciado (Neon, Render, compose) ganha ``pool_pre_ping``, que
+    testa a conexão antes de usá-la e troca a que caiu, e ``pool_recycle``.
+    O SQLite fica com os padrões, como antes.
+    """
+    if not url.startswith('postgresql'):
+        return {}
+    return {'pool_pre_ping': True, 'pool_recycle': POSTGRES_POOL_RECYCLE_SECONDS}
+
+
 class Config:
     """Application configuration
 
@@ -104,9 +133,12 @@ class Config:
     MAX_CONTENT_LENGTH: int = get_env_int('MAX_CONTENT_LENGTH', 1024 * 1024)
     MAX_FEEDBACK_CHARS: int = get_env_int('MAX_FEEDBACK_CHARS', 5000)
 
-    # SQLAlchemy configuration
-    SQLALCHEMY_DATABASE_URI: str = os.environ.get(
-        'DATABASE_URL', 'sqlite:///feedlens.db')
+    # SQLAlchemy configuration. Sem DATABASE_URL, cai no SQLite local. Em
+    # produção a string vem só do ambiente (segredo no painel do host), nunca
+    # do código; veja a seção de deploy do README.
+    SQLALCHEMY_DATABASE_URI: str = normalize_database_url(os.environ.get(
+        'DATABASE_URL', 'sqlite:///feedlens.db'))
+    SQLALCHEMY_ENGINE_OPTIONS: dict = database_engine_options(SQLALCHEMY_DATABASE_URI)
     SQLALCHEMY_TRACK_MODIFICATIONS: bool = False
 
     # LLM: BYOK multi-provedor via LiteLLM (app/llm). Nenhuma chave é
