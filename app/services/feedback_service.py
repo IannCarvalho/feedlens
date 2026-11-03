@@ -193,7 +193,7 @@ class FeedbackService:
         """Correção humana da análise da IA: spam e/ou sentimento.
 
         Só mexe no que foi informado (``None`` = não alterar); as funcionalidades
-        continuam as da análise. Estatísticas, listas e o resumo semanal passam a
+        continuam as da análise. Estatísticas, listas e o resumo mensal passam a
         refletir a correção na próxima leitura, porque todos leem esses campos.
         Devolve ``True`` se algo mudou (repetir o mesmo valor não grava).
         """

@@ -28,7 +28,7 @@ Uma lente sobre o feedback dos seus usuários: análise automática de feedback 
 
 ## Visão geral
 
-O FeedLens recebe feedbacks de usuários, classifica-os por sentimento, detecta spam e identifica as funcionalidades mais pedidas — e disponibiliza tudo em um dashboard web e em um resumo semanal por e-mail. Ele resolve o gargalo de analisar manualmente feedbacks que chegam de muitos canais (atendimento, comunidades, redes sociais).
+O FeedLens recebe feedbacks de usuários, classifica-os por sentimento, detecta spam e identifica as funcionalidades mais pedidas — e disponibiliza tudo em um dashboard web e em um resumo mensal por e-mail. Ele resolve o gargalo de analisar manualmente feedbacks que chegam de muitos canais (atendimento, comunidades, redes sociais).
 
 A análise é **BYOK (bring your own key) e multi-provedor**: funciona com OpenAI, Anthropic, Google Gemini, Groq ou OpenRouter, usando as chaves do operador (com fallback entre provedores) ou a chave que o próprio cliente envia na requisição.
 
@@ -41,7 +41,7 @@ A aplicação é responsável por:
 3. **Detecção de spam** nos feedbacks, que ficam fora das listas e dos gráficos, mas podem ser revisados e corrigidos no painel
 4. **Reprocessamento** dos feedbacks que a IA não conseguiu analisar (cota excedida, timeout etc.), que ficam marcados como "não analisados" em vez de se passarem por uma opinião
 5. **Dashboard web** com estatísticas e visualizações
-6. **Resumo semanal** enviado por e-mail aos stakeholders
+6. **Resumo mensal** enviado por e-mail aos stakeholders
 
 ## Arquitetura
 
@@ -55,7 +55,7 @@ flowchart TD
     llmlayer["app/llm<br/>(cadeia de provedores · LiteLLM)"]
     llm{{"OpenAI · Anthropic · Gemini · Groq · OpenRouter"}}
     db[("PostgreSQL ou SQLite")]
-    mail["SMTP<br/>(resumo semanal)"]
+    mail["SMTP<br/>(resumo mensal)"]
 
     customer --> form
     form -- "POST /api/feedbacks {id, feedback}" --> api
@@ -64,7 +64,7 @@ flowchart TD
     api --> llmlayer
     llmlayer -- "qual chave e modelo respondem" --> llm
     api --> db
-    api -. resumo semanal .-> mail
+    api -. resumo mensal .-> mail
 
     classDef py fill:#2b6cb0,stroke:#1a365d,color:#fff;
     classDef js fill:#b7791f,stroke:#744210,color:#fff;
@@ -112,7 +112,7 @@ feedlens/
 │   ├── csrf.py                    # Tokens CSRF da sessão
 │   ├── extensions.py              # Rate limit (Flask-Limiter) e CORS
 │   ├── ingest_auth.py             # Chave de ingestão opcional (X-API-Key)
-│   ├── scheduling.py              # Agendador do resumo semanal (python -m app.scheduling)
+│   ├── scheduling.py              # Agendador do resumo mensal (python -m app.scheduling)
 │   ├── llm/                       # Camada de IA via LiteLLM
 │   │   ├── providers.py           # Catálogo/allowlist de provedores e validação de modelo
 │   │   ├── credentials.py         # Cadeia de credenciais: requisição, cofre e ambiente
@@ -251,7 +251,7 @@ FEEDLENS_ENCRYPTION_KEY=sua_chave_fernet
 
    Gere as duas chaves uma vez e mantenha-as fixas: trocar a `SECRET_KEY` derruba as sessões abertas, e trocar a `FEEDLENS_ENCRYPTION_KEY` sem rotação deixa ilegíveis as chaves de provedor já salvas.
 
-   Opcionais: chaves de LLM no servidor (ou cadastre-as depois na tela de provedores) e o e-mail do resumo semanal:
+   Opcionais: chaves de LLM no servidor (ou cadastre-as depois na tela de provedores) e o e-mail do resumo mensal:
 ```
 # LLM: preencha só os provedores que usar (OPENAI_/ANTHROPIC_/GEMINI_/GROQ_/OPENROUTER_API_KEY)
 ANTHROPIC_API_KEY=sua_chave_anthropic
@@ -526,7 +526,7 @@ Os números e gráficos (`total_feedbacks`, `sentiment_counts`, `sentiment_perce
 
 **Endpoint:** `PATCH /api/feedbacks/<id>`
 
-**Descrição:** Revisão humana do que a IA decidiu. Corpo: `{"is_spam": true|false}` e/ou `{"sentiment": "POSITIVO"|"NEGATIVO"|"INCONCLUSIVO"}`, pelo menos um dos dois. Só esses campos mudam (texto e funcionalidades continuam os da análise; outras chaves são ignoradas). Devolve o feedback atualizado, e repetir o mesmo valor é seguro. Listas, gráficos e o resumo semanal passam a refletir a correção.
+**Descrição:** Revisão humana do que a IA decidiu. Corpo: `{"is_spam": true|false}` e/ou `{"sentiment": "POSITIVO"|"NEGATIVO"|"INCONCLUSIVO"}`, pelo menos um dos dois. Só esses campos mudam (texto e funcionalidades continuam os da análise; outras chaves são ignoradas). Devolve o feedback atualizado, e repetir o mesmo valor é seguro. Listas, gráficos e o resumo mensal passam a refletir a correção.
 
 **Autenticação:** só a sessão do painel com o header `X-CSRF-Token`. O `API_READ_TOKEN` **não** vale aqui. Sem `DASHBOARD_PASSWORD` responde `403` (`auth_not_configured`); sem sessão, `401`; com CSRF inválido, `403`. Também responde `400` para id ou corpo inválidos (sem campo, valor fora de `POSITIVO`/`NEGATIVO`/`INCONCLUSIVO`, `is_spam` que não é booleano) e `404` quando o feedback não existe.
 
@@ -621,8 +621,8 @@ Se o login estiver habilitado e a sessão expirar, o cliente detecta a resposta 
 
 ## Funcionalidade de E-mail
 
-A aplicação envia automaticamente um resumo semanal dos feedbacks para os stakeholders configurados. O e-mail inclui:
-- Estatísticas de feedbacks da semana
+A aplicação envia automaticamente um resumo mensal dos feedbacks para os stakeholders configurados. O e-mail inclui:
+- Estatísticas de feedbacks do mês anterior (mês civil fechado)
 - Porcentagem de feedbacks positivos e negativos
 - Principais funcionalidades solicitadas
 
@@ -630,11 +630,11 @@ O envio é agendado via APScheduler. O texto do resumo é gerado por LLM, com fa
 
 ### Agendamento do resumo
 
-O resumo sai toda segunda-feira às 8h (fuso `SCHEDULER_TIMEZONE`, padrão `America/Sao_Paulo`) e exige **um único agendador por deploy**, senão cada processo envia o seu e-mail:
+O resumo sai no dia 1 de cada mês às 8h (fuso `SCHEDULER_TIMEZONE`, padrão `America/Sao_Paulo`) e cobre o mês civil anterior inteiro: o envio de 1º de novembro traz outubro, de 1º/10 00:00 a 1º/11 00:00 no fuso do agendador. Ele exige **um único agendador por deploy**, senão cada processo envia o seu e-mail:
 
 - **Processo único** (padrão do container: 1 worker do gunicorn com threads, via `gunicorn.conf.py`): `SCHEDULER_ENABLED=true` no próprio app. O `docker-compose.yml` já liga.
 - **Vários workers ou réplicas:** `SCHEDULER_ENABLED=false` no web e um processo dedicado com `python -m app.scheduling`.
-- **Sob demanda ou por cron externo** (ex.: Render Cron Job): `flask send-weekly-summary` (no container: `docker compose exec web flask --app wsgi send-weekly-summary`).
+- **Sob demanda ou por cron externo** (ex.: Render Cron Job): `flask send-monthly-summary` (no container: `docker compose exec web flask --app wsgi send-monthly-summary`). Rodado à mão no meio do mês, ele envia o mês anterior inteiro, nunca um mês pela metade.
 
 O SMTP usa STARTTLS com certificado verificado e `EMAIL_TIMEOUT` (padrão 30s). `APP_BASE_URL` define o link do painel no e-mail. Sem configuração de e-mail o app sobe normalmente (inclusive em produção) e só registra um aviso.
 
@@ -651,7 +651,7 @@ O Render free **bloqueia a saída SMTP nas portas 25, 465 e 587** desde 26/09/20
 | `EMAIL_FROM` | um remetente verificado em *Senders* (o Brevo manda um código de confirmação) |
 | `EMAIL_RECIPIENTS` | quem recebe o resumo, separado por vírgula |
 
-**O Render free dorme** após 15 minutos sem acesso, e o agendador só roda com o serviço acordado. O job tolera até 1h de atraso (`misfire_grace_time`), então basta um pinger grátis (ex.: [cron-job.org](https://cron-job.org)) chamando `GET /health` às 07:55 de segunda, no fuso de São Paulo.
+**O Render free dorme** após 15 minutos sem acesso, e o agendador só roda com o serviço acordado. O job tolera até 1h de atraso (`misfire_grace_time`), então basta um pinger grátis (ex.: [cron-job.org](https://cron-job.org)) chamando `GET /health` às 07:55 do dia 1 de cada mês, no fuso de São Paulo.
 
 ## Deploy em produção (Render + Neon)
 
@@ -782,7 +782,7 @@ Cuidados de segurança:
 - revisão humana: filtro de spam, correção de spam e de sentimento;
 - feedbacks "não analisados" identificáveis e reprocessáveis (painel e `flask reanalyze-pending`);
 - rate limiting nos endpoints públicos, chave de ingestão opcional e CORS configurável;
-- resumo semanal por e-mail gerado por LLM, com fallback para um template estático;
+- resumo mensal por e-mail gerado por LLM, com fallback para um template estático;
 - avaliação do prompt (`evals/`), suíte de testes, CI com Postgres e Docker.
 
 **Limitações conhecidas** (veja também o [ARCHITECTURE.md](ARCHITECTURE.md#6-limitações-conhecidas-e-evolução)):

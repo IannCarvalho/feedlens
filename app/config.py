@@ -89,7 +89,7 @@ class Config:
             OPENROUTER_API_KEY: optional provider keys (BYOK)
         LLM_MODELS: ordered 'provider/model' chain (primary first, then fallbacks)
         EMAIL_*: Email server configuration
-        EMAIL_RECIPIENTS: List of email addresses for weekly summary
+        EMAIL_RECIPIENTS: List of email addresses for the monthly summary
     """
 
     # Flask configuration
@@ -201,14 +201,14 @@ class Config:
     # que não é um remetente válido: ali o From é um endereço verificado.
     EMAIL_FROM: Optional[str] = os.environ.get('EMAIL_FROM') or None
 
-    # Email recipients for weekly summary
+    # Email recipients for the monthly summary
     EMAIL_RECIPIENTS: List[str] = get_env_list('EMAIL_RECIPIENTS')
     # Timeout (s) da conexão SMTP: sem ele, um servidor mudo trava o job.
     EMAIL_TIMEOUT: int = get_env_int('EMAIL_TIMEOUT', 30)
     # URL pública do painel, usada no link do e-mail (vazia = e-mail sem link).
     APP_BASE_URL: str = os.environ.get('APP_BASE_URL', '').rstrip('/')
 
-    # Agendador do resumo semanal. Opt-in porque deve existir UM por deploy:
+    # Agendador do resumo mensal. Opt-in porque deve existir UM por deploy:
     # cada processo que o iniciasse mandaria o e-mail de novo (app/scheduling.py).
     SCHEDULER_ENABLED: bool = get_env_bool('SCHEDULER_ENABLED', False)
     SCHEDULER_TIMEZONE: str = os.environ.get('SCHEDULER_TIMEZONE', 'America/Sao_Paulo')

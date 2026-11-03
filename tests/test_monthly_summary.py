@@ -1,4 +1,4 @@
-"""Testes do resumo semanal: job com app context, agregação, e-mail e SMTP.
+"""Testes do resumo mensal: job com app context, agregação, e-mail e SMTP.
 
 O LLM do e-mail é substituído pelo template estático, então nada sai para a
 rede; o SMTP é mockado.
@@ -22,7 +22,7 @@ from app.models.feedback import (
     Feedback,
     RequestedFeature,
 )
-from app.scheduling import JOB_ID, run_weekly_summary, schedule_weekly_summary
+from app.scheduling import JOB_ID, run_monthly_summary, schedule_monthly_summary
 from app.services import email_service
 
 EMAIL_SETTINGS = {
@@ -43,13 +43,13 @@ def email_config():
 
 
 def _add_feedback(sentiment, *, spam=False, days_ago=1, features=(),
-                  analysis_status=ANALYSIS_ANALYZED):
+                  analysis_status=ANALYSIS_ANALYZED, now=None):
     feedback = Feedback(
         feedback_text="texto",
         sentiment=sentiment,
         is_spam=spam,
         analysis_status=analysis_status,
-        created_at=datetime.now(timezone.utc) - timedelta(days=days_ago),
+        created_at=(now or datetime.now(timezone.utc)) - timedelta(days=days_ago),
     )
     for code, reason in features:
         feedback.requested_features.append(RequestedFeature(code=code, reason=reason))
@@ -65,7 +65,7 @@ def test_job_sends_from_a_thread_without_app_context(app, email_config):
     outcome = {}
 
     with patch(SMTP) as smtp_cls, patch(LLM_EMAIL, side_effect=email_service.generate_email_content):
-        worker = threading.Thread(target=lambda: outcome.update(sent=run_weekly_summary(app)))
+        worker = threading.Thread(target=lambda: outcome.update(sent=run_monthly_summary(app)))
         worker.start()
         worker.join(timeout=10)
 
@@ -96,45 +96,86 @@ def test_in_app_scheduler_starts_and_registers_the_job_when_enabled():
         app_scheduler.shutdown(wait=False)
 
 
-def test_schedule_registers_monday_job_in_configured_timezone(app):
+def test_schedule_registers_day_one_job_in_configured_timezone(app):
     app.config["SCHEDULER_TIMEZONE"] = "America/Sao_Paulo"
     scheduler = BackgroundScheduler()
-    schedule_weekly_summary(scheduler, app)
+    schedule_monthly_summary(scheduler, app)
 
     job = scheduler.get_job(JOB_ID)
     assert job.args == (app,)
     assert str(job.trigger.timezone) == "America/Sao_Paulo"
-    assert "day_of_week='mon'" in str(job.trigger)
+    assert "day='1'" in str(job.trigger)
+    assert "day_of_week" not in str(job.trigger)
     assert "hour='8'" in str(job.trigger)
 
 
-def test_cli_send_weekly_summary_reports_outcome(app):
+def test_cli_send_monthly_summary_reports_outcome(app):
     runner = app.test_cli_runner()
-    target = "app.services.email_service.send_weekly_summary_email"
+    target = "app.services.email_service.send_monthly_summary_email"
     with patch(target, return_value=True):
-        ok = runner.invoke(args=["send-weekly-summary"])
+        ok = runner.invoke(args=["send-monthly-summary"])
     with patch(target, return_value=False):
-        failed = runner.invoke(args=["send-weekly-summary"])
+        failed = runner.invoke(args=["send-monthly-summary"])
 
     assert ok.exit_code == 0
-    assert "Resumo semanal enviado" in ok.output
+    assert "Resumo mensal enviado" in ok.output
     assert failed.exit_code == 1
     assert "NAO enviado" in failed.output
 
 
-# --- estatísticas da semana ---------------------------------------------------
+# --- janela: o mês civil anterior --------------------------------------------
 
-def test_weekly_summary_aggregates_window_and_skips_spam(app):
-    _add_feedback("POSITIVO", features=[("EDITAR_PERFIL", "editar o perfil"),
-                                        ("MODO_ESCURO", "usa a noite")])
-    _add_feedback("POSITIVO", features=[("EDITAR_PERFIL", "trocar a foto")])
-    _add_feedback("NEGATIVO")
-    _add_feedback("NEGATIVO", spam=True, features=[("SPAM_X", "spam")])
-    _add_feedback("POSITIVO", days_ago=10, features=[("ANTIGO", "fora da janela")])
+# Dia 1 de novembro, 08:00 em São Paulo (UTC-3): a hora em que o job dispara.
+NOW = datetime(2026, 11, 1, 11, 0, tzinfo=timezone.utc)
+
+
+def test_window_is_the_previous_calendar_month_in_sao_paulo():
+    start, end, label = email_service.previous_month_window(NOW, "America/Sao_Paulo")
+    # 1º/10 00:00 e 1º/11 00:00 em São Paulo = 03:00 UTC.
+    assert start == datetime(2026, 10, 1, 3, 0, tzinfo=timezone.utc)
+    assert end == datetime(2026, 11, 1, 3, 0, tzinfo=timezone.utc)
+    assert label == "outubro de 2026"
+
+
+def test_window_mid_month_still_covers_the_whole_previous_month():
+    mid = datetime(2026, 11, 17, 15, 0, tzinfo=timezone.utc)
+    assert email_service.previous_month_window(mid, "America/Sao_Paulo") == \
+        email_service.previous_month_window(NOW, "America/Sao_Paulo")
+
+
+def test_window_wraps_the_year_in_january():
+    start, end, label = email_service.previous_month_window(
+        datetime(2027, 1, 1, 11, 0, tzinfo=timezone.utc), "America/Sao_Paulo")
+    assert label == "dezembro de 2026"
+    assert start == datetime(2026, 12, 1, 3, 0, tzinfo=timezone.utc)
+    assert end == datetime(2027, 1, 1, 3, 0, tzinfo=timezone.utc)
+
+
+def test_window_uses_local_midnight_not_utc():
+    """23h de 31/10 em São Paulo já é 1º/11 em UTC, mas ainda é outubro aqui."""
+    late_october = datetime(2026, 11, 1, 2, 30, tzinfo=timezone.utc)
+    _, _, label = email_service.previous_month_window(late_october, "America/Sao_Paulo")
+    assert label == "setembro de 2026"
+
+
+# --- estatísticas do mês ------------------------------------------------------
+
+def test_monthly_summary_aggregates_window_and_skips_spam(app):
+    _add_feedback("POSITIVO", now=NOW, features=[("EDITAR_PERFIL", "editar o perfil"),
+                                                 ("MODO_ESCURO", "usa a noite")])
+    _add_feedback("POSITIVO", now=NOW, days_ago=20,
+                  features=[("EDITAR_PERFIL", "trocar a foto")])
+    _add_feedback("NEGATIVO", now=NOW, days_ago=30)
+    _add_feedback("NEGATIVO", now=NOW, spam=True, features=[("SPAM_X", "spam")])
+    # Fora da janela: setembro e o próprio novembro.
+    _add_feedback("POSITIVO", now=NOW, days_ago=40, features=[("ANTIGO", "setembro")])
+    _add_feedback("POSITIVO", now=NOW, days_ago=-3, features=[("NOVO", "novembro")])
     db.session.commit()
 
-    stats = email_service.generate_weekly_summary()
+    with patch.object(Config, "SCHEDULER_TIMEZONE", "America/Sao_Paulo"):
+        stats = email_service.generate_monthly_summary(NOW)
 
+    assert stats["period_label"] == "outubro de 2026"
     assert stats["total_feedbacks"] == 3
     assert stats["positive_count"] == 2
     assert stats["negative_count"] == 1
@@ -144,29 +185,30 @@ def test_weekly_summary_aggregates_window_and_skips_spam(app):
     assert sorted(stats["top_features"][0]["reasons"]) == ["editar o perfil", "trocar a foto"]
 
 
-def test_weekly_summary_empty_week(app):
-    stats = email_service.generate_weekly_summary()
+def test_monthly_summary_empty_month(app):
+    stats = email_service.generate_monthly_summary(NOW)
     assert stats["total_feedbacks"] == 0
     assert stats["positive_count"] == 0
     assert stats["top_features"] == []
+    assert stats["period_label"] == "outubro de 2026"
 
 
-def test_weekly_summary_skips_unanalyzed_like_the_dashboard(app):
+def test_monthly_summary_skips_unanalyzed_like_the_dashboard(app):
     """Feedbacks que a IA não analisou não entram nos números do resumo.
 
     O sentimento deles é só o valor padrão (INCONCLUSIVO), não uma opinião; o
     resumo usa o mesmo critério do dashboard e os deixa de fora, em vez de
     contá-los como Inconclusivos.
     """
-    _add_feedback("POSITIVO", features=[("EDITAR_PERFIL", "editar o perfil")])
-    _add_feedback("NEGATIVO")
+    _add_feedback("POSITIVO", now=NOW, features=[("EDITAR_PERFIL", "editar o perfil")])
+    _add_feedback("NEGATIVO", now=NOW)
     # Não analisados: sentimento só padrão. A feature deles também fica fora.
-    _add_feedback("INCONCLUSIVO", analysis_status=ANALYSIS_UNANALYZED,
+    _add_feedback("INCONCLUSIVO", now=NOW, analysis_status=ANALYSIS_UNANALYZED,
                   features=[("FANTASMA", "nao analisado")])
-    _add_feedback("INCONCLUSIVO", analysis_status=ANALYSIS_UNANALYZED)
+    _add_feedback("INCONCLUSIVO", now=NOW, analysis_status=ANALYSIS_UNANALYZED)
     db.session.commit()
 
-    stats = email_service.generate_weekly_summary()
+    stats = email_service.generate_monthly_summary(NOW)
 
     assert stats["total_feedbacks"] == 2
     assert stats["positive_count"] == 1
@@ -177,30 +219,30 @@ def test_weekly_summary_skips_unanalyzed_like_the_dashboard(app):
     assert "FANTASMA" not in {f["code"] for f in stats["top_features"]}
 
 
-def test_weekly_summary_keeps_analyzed_inconclusive(app):
+def test_monthly_summary_keeps_analyzed_inconclusive(app):
     """Um Inconclusivo DE VERDADE (analisado) continua contando.
 
     A exclusão é por ``analysis_status``, não pelo sentimento: a IA pode ter
     analisado e concluído que o feedback é inconclusivo, e isso é uma opinião.
     """
-    _add_feedback("POSITIVO")
-    _add_feedback("INCONCLUSIVO", analysis_status=ANALYSIS_ANALYZED)
+    _add_feedback("POSITIVO", now=NOW)
+    _add_feedback("INCONCLUSIVO", now=NOW, analysis_status=ANALYSIS_ANALYZED)
     db.session.commit()
 
-    stats = email_service.generate_weekly_summary()
+    stats = email_service.generate_monthly_summary(NOW)
 
     assert stats["total_feedbacks"] == 2
     assert stats["positive_count"] == 1
     assert stats["negative_count"] == 0
 
 
-def test_weekly_summary_all_unanalyzed_is_an_empty_week(app):
-    """Só não analisados = semana vazia, não um e-mail cheio de Inconclusivos."""
-    _add_feedback("INCONCLUSIVO", analysis_status=ANALYSIS_UNANALYZED)
-    _add_feedback("INCONCLUSIVO", analysis_status=ANALYSIS_UNANALYZED)
+def test_monthly_summary_all_unanalyzed_is_an_empty_month(app):
+    """Só não analisados = mês vazio, não um e-mail cheio de Inconclusivos."""
+    _add_feedback("INCONCLUSIVO", now=NOW, analysis_status=ANALYSIS_UNANALYZED)
+    _add_feedback("INCONCLUSIVO", now=NOW, analysis_status=ANALYSIS_UNANALYZED)
     db.session.commit()
 
-    stats = email_service.generate_weekly_summary()
+    stats = email_service.generate_monthly_summary(NOW)
 
     assert stats["total_feedbacks"] == 0
     assert stats["top_features"] == []
@@ -209,6 +251,7 @@ def test_weekly_summary_all_unanalyzed_is_an_empty_week(app):
 # --- conteúdo do e-mail -------------------------------------------------------
 
 STATS = {
+    "period_label": "outubro de 2026",
     "total_feedbacks": 4,
     "positive_count": 3,
     "negative_count": 1,
@@ -216,6 +259,14 @@ STATS = {
     "negative_percentage": 25.0,
     "top_features": [],
 }
+
+
+def test_static_email_names_the_month():
+    out = email_service.generate_email_content(STATS)
+    assert "Resumo Mensal" in out
+    assert "recebidos em outubro de 2026" in out
+    empty = email_service.generate_email_content({**STATS, "total_feedbacks": 0})
+    assert empty == "<p>Nenhum feedback recebido em outubro de 2026.</p>"
 
 
 def test_static_email_escapes_llm_derived_codes():
@@ -247,7 +298,7 @@ def test_static_email_links_dashboard_only_with_base_url():
 def test_smtp_uses_timeout_and_verified_tls(app, email_config):
     with patch(SMTP) as smtp_cls, patch(LLM_EMAIL, return_value="<p>oi</p>"), \
             patch.object(Config, "EMAIL_TIMEOUT", 12):
-        assert email_service.send_weekly_summary_email() is True
+        assert email_service.send_monthly_summary_email() is True
 
     smtp_cls.assert_called_once_with("smtp.example.com", 587, timeout=12)
     server = smtp_cls.return_value.__enter__.return_value
@@ -262,7 +313,7 @@ def test_smtp_failure_returns_false_and_still_closes(app, email_config):
     with patch(SMTP) as smtp_cls, patch(LLM_EMAIL, return_value="<p>oi</p>"):
         server = smtp_cls.return_value.__enter__.return_value
         server.login.side_effect = smtplib.SMTPAuthenticationError(535, b"bad credentials")
-        assert email_service.send_weekly_summary_email() is False
+        assert email_service.send_monthly_summary_email() is False
 
     smtp_cls.return_value.__exit__.assert_called_once()
 
@@ -297,7 +348,7 @@ def test_gunicorn_config_is_single_threaded_worker_on_platform_port(monkeypatch)
 def _sent_with(app, email_from):
     with patch.object(Config, "EMAIL_FROM", email_from), patch(SMTP) as smtp_cls, \
             patch(LLM_EMAIL, side_effect=email_service.generate_email_content):
-        assert email_service.send_weekly_summary_email() is True
+        assert email_service.send_monthly_summary_email() is True
     server = smtp_cls.return_value.__enter__.return_value
     envelope_from, recipients, raw = server.sendmail.call_args.args
     return server, envelope_from, recipients, raw
