@@ -1,9 +1,13 @@
 import logging
+import os
 from logging.config import fileConfig
 
 from flask import current_app
+from sqlalchemy import create_engine, pool
 
 from alembic import context
+
+from app.config import migration_database_url
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -24,7 +28,22 @@ def get_engine():
         return current_app.extensions['migrate'].db.engine
 
 
+def get_direct_url():
+    """URL direta (Neon: DATABASE_URL_UNPOOLED) quando ela se aplica, senão None.
+
+    O app fala com o Neon pela conexão pooled; DDL e o lock de versão do
+    Alembic vão pela direta. Sem a variável, as migrations usam o engine do
+    app, como sempre.
+    """
+    app_url = current_app.config['SQLALCHEMY_DATABASE_URI']
+    url = migration_database_url(app_url, os.environ.get('DATABASE_URL_UNPOOLED'))
+    return None if url == app_url else url
+
+
 def get_engine_url():
+    direct_url = get_direct_url()
+    if direct_url:
+        return direct_url.replace('%', '%%')
     try:
         return get_engine().url.render_as_string(hide_password=False).replace(
             '%', '%%')
@@ -94,7 +113,9 @@ def run_migrations_online():
     if conf_args.get("process_revision_directives") is None:
         conf_args["process_revision_directives"] = process_revision_directives
 
-    connectable = get_engine()
+    direct_url = get_direct_url()
+    connectable = (create_engine(direct_url, poolclass=pool.NullPool)
+                   if direct_url else get_engine())
 
     with connectable.connect() as connection:
         context.configure(

@@ -20,6 +20,7 @@ Uma lente sobre o feedback dos seus usuários: análise automática de feedback 
 - [Qualidade da classificação](#qualidade-da-classificação)
 - [Interface Web](#interface-web)
 - [Funcionalidade de E-mail](#funcionalidade-de-e-mail)
+- [Deploy em produção (Render + Neon)](#deploy-em-produção-render--neon)
 - [Testes e CI](#testes-e-ci)
 - [Considerações de Desenvolvimento](#considerações-de-desenvolvimento)
 - [Status e próximos passos](#status-e-próximos-passos)
@@ -262,7 +263,7 @@ EMAIL_PASSWORD=sua_senha_email
 EMAIL_RECIPIENTS=stakeholder1@exemplo.com,stakeholder2@exemplo.com
 ```
 
-   Em produção, aponte o `DATABASE_URL` para o PostgreSQL (`postgresql://usuario:senha@host/feedlens`). As demais variáveis (timeouts, limites, porta e TLS do e-mail) têm padrão e estão comentadas no `.env-example`.
+   Sem `DATABASE_URL`, o app usa o SQLite local (`instance/feedlens.db`), suficiente para desenvolvimento. Em produção, defina `DATABASE_URL` com um PostgreSQL (`postgresql://usuario:senha@host/feedlens`), sempre pelo ambiente e nunca no código; o deploy de referência usa o Neon (veja [Deploy em produção](#deploy-em-produção-render--neon)). As demais variáveis (timeouts, limites, porta e TLS do e-mail) têm padrão e estão comentadas no `.env-example`.
 
 6. Crie as tabelas aplicando as migrations versionadas (`migrations/versions/`):
 ```bash
@@ -637,6 +638,43 @@ O resumo sai toda segunda-feira às 8h (fuso `SCHEDULER_TIMEZONE`, padrão `Amer
 
 O SMTP usa STARTTLS com certificado verificado e `EMAIL_TIMEOUT` (padrão 30s). `APP_BASE_URL` define o link do painel no e-mail. Sem configuração de e-mail o app sobe normalmente (inclusive em produção) e só registra um aviso.
 
+## Deploy em produção (Render + Neon)
+
+O deploy de referência roda tudo em camadas gratuitas: o backend como serviço web Docker no **Render** (plano free), o banco **PostgreSQL no Neon** (plano free) e o formulário público no Vercel (veja o README do [feedlens-form](https://github.com/IannCarvalho/feedlens-form)). O serviço está descrito em [`render.yaml`](render.yaml) (Blueprint).
+
+### Por que o Neon
+
+| Opção | Limite que pesa |
+|---|---|
+| **Neon free** (escolhido) | 1 GB por projeto e 100 CU-horas/mês, **sem prazo de expiração**. O compute dorme após 5 min sem uso e acorda em poucas centenas de ms. |
+| Render Postgres free | Expira **30 dias** após a criação (mais 14 dias de carência, depois é apagado). |
+| Supabase free | Pausa o projeto após uma semana sem atividade. |
+| SQLite no contêiner | Disco efêmero no Render free: os dados somem a cada deploy ou hibernação. |
+
+Para um app de baixo tráfego, o Neon é o único dos quatro que guarda os dados indefinidamente sem custo. O preço é a latência do primeiro acesso depois de um período parado, que se soma ao cold start do próprio Render free.
+
+### Passo a passo
+
+1. **Banco:** crie um projeto no [Neon](https://neon.com). O Neon entrega duas strings: a **pooled** (host com `-pooler`, PgBouncer em modo transação) e a **direta**. O app usa a pooled em `DATABASE_URL`, e as migrations usam a direta em `DATABASE_URL_UNPOOLED` (`migrations/env.py` a escolhe só quando o app está num Postgres), como recomenda o Neon: DDL e o lock de versão do Alembic não devem passar pelo PgBouncer. Com a CLI do Neon (`neon init` + `neon deploy`, ou `neon env pull`), as duas vão para o `.env.local` (ignorado pelo git). O formato é `postgresql://USUARIO:SENHA@HOST/BANCO?sslmode=require&channel_binding=require`; o `psycopg2-binary` já traz uma libpq que suporta `channel_binding`.
+2. **Serviço:** no Render, *New > Blueprint* apontando para este repositório (ou use o serviço já existente). O plano free **não** aceita `preDeployCommand`; por isso as migrations rodam no arranque do contêiner ([`docker/entrypoint.sh`](docker/entrypoint.sh): `flask db upgrade` e depois o gunicorn). `flask db upgrade` é idempotente, então rodar a cada boot não custa nada num banco já migrado.
+3. **Segredos** (todos `sync: false` no `render.yaml`: o Render pede o valor uma vez e o guarda fora do git):
+
+   | Variável | Valor |
+   |---|---|
+   | `DATABASE_URL` | string **pooled** do Neon (host com `-pooler`) |
+   | `DATABASE_URL_UNPOOLED` | string **direta** do Neon, usada só pelas migrations |
+   | `SECRET_KEY` | aleatória, 32+ caracteres; trocá-la derruba as sessões |
+   | `DASHBOARD_PASSWORD` | senha do painel; forte antes de divulgar a URL |
+   | `FEEDLENS_ENCRYPTION_KEY` | chave Fernet (veja [Chaves de Provedor](#chaves-de-provedor-cofre)); não troque sem rotação |
+
+   No campo *Value* vai só o valor, sem o `NOME=` na frente.
+4. **Formulário público:** defina `INGEST_PUBLIC_ORIGINS` e `CORS_ORIGINS` com a URL exata do formulário (ex.: `https://feedlens-tau.vercel.app`). O padrão de `CORS_ORIGINS` é `*` para não atrapalhar o desenvolvimento local; em produção, restrinja.
+5. **Deploy e checagem:** depois do deploy, o log deve mostrar `entrypoint: migrations aplicadas.`. Confira `GET /health` (`200`, com o banco) e entre no painel.
+
+**Conexões e o banco que dorme.** Quando o Neon suspende o compute, as conexões abertas caem. Com um Postgres, o app liga `pool_pre_ping` (testa a conexão antes de usar e troca a que caiu) e recicla as conexões a cada 5 minutos (`app/config.py`); o SQLite continua com os padrões. URLs no esquema antigo `postgres://` são aceitas e convertidas para `postgresql://`.
+
+**Mudar de banco não migra dados.** Apontar `DATABASE_URL` para um banco novo começa com as tabelas vazias (criadas pelo `flask db upgrade`). As chaves de provedor salvas no cofre ficam no banco: depois da troca, cadastre-as de novo no painel.
+
 ## Testes e CI
 
 Backend (com o ambiente virtual ativo):
@@ -650,7 +688,7 @@ pytest tests
 
 O `pytest.ini` já aponta para `tests/` e põe a raiz no `sys.path`. A suíte não faz chamadas reais a provedores de LLM, então não gasta cota nem precisa de chave. Ela cobre a API (ingestão, leitura, correção e reanálise), autenticação e CSRF, o cofre de chaves, a cadeia de provedores, o contrato do prompt, as estatísticas, o SPA e as migrations. As migrations também rodam num PostgreSQL de verdade no CI (`flask db upgrade`, `flask db check`, `flask db downgrade base`), porque o SQLite dos testes não pega estouro de `VARCHAR`, chave estrangeira nem `timestamptz`.
 
-O contrato HTTP com os clientes está descrito em [`openapi.yaml`](openapi.yaml) (OpenAPI 3.1, na raiz do repositório): a ingestão `POST /api/feedbacks` e todas as rotas que o painel consome (sessão e CSRF, `GET /api/stats`, leitura e correção de feedbacks, reanálise unitária e em lote, e o cofre de provedores), com os códigos de erro e seus esquemas. `tests/test_openapi_contract.py` mantém a spec honesta sem custo nenhum: valida que o `openapi.yaml` é um documento OpenAPI 3.1 válido (`openapi-spec-validator`) e, para cada endpoint coberto, chama a API real pelo test client (com a LLM mockada) e confere o corpo e o status de cada resposta contra o esquema declarado (`jsonschema`). Se uma rota coberta sumir ou mudar de forma, o teste falha. Rode-o junto com o resto (`pytest tests`) ou sozinho com `pytest tests/test_openapi_contract.py`. Os tipos do painel (`src/types/api.ts`) ainda são mantidos à mão; gerá-los a partir deste `openapi.yaml` fica para um PR futuro.
+O contrato HTTP com os clientes está descrito em [`openapi.yaml`](openapi.yaml) (OpenAPI 3.1, na raiz do repositório): a ingestão `POST /api/feedbacks` e todas as rotas que o painel consome (sessão e CSRF, `GET /api/stats`, leitura e correção de feedbacks, reanálise unitária e em lote, e o cofre de provedores), com os códigos de erro e seus esquemas. `tests/test_openapi_contract.py` mantém a spec honesta sem custo nenhum: valida que o `openapi.yaml` é um documento OpenAPI 3.1 válido (`openapi-spec-validator`) e, para cada endpoint coberto, chama a API real pelo test client (com a LLM mockada) e confere o corpo e o status de cada resposta contra o esquema declarado (`jsonschema`). Se uma rota coberta sumir ou mudar de forma, o teste falha. Rode-o junto com o resto (`pytest tests`) ou sozinho com `pytest tests/test_openapi_contract.py`. O painel gera os tipos TypeScript a partir deste `openapi.yaml`, fixado num commit deste repositório (`api-spec.version` no [feedlens-panel](https://github.com/IannCarvalho/feedlens-panel)); ao mudar o contrato, suba esse SHA no painel.
 
 Os fronts têm testes e CI nos próprios repositórios: [feedlens-panel](https://github.com/IannCarvalho/feedlens-panel) (typecheck, lint e build; sem testes automatizados de componente) e [feedlens-form](https://github.com/IannCarvalho/feedlens-form) (typecheck, lint, Vitest, build com orçamento de bundle e a imagem Docker). Aqui, os testes do painel ficam no contrato: `tests/test_spa.py` (entrega e deep-links) e `tests/test_panel_pin.py` (pin e script de download).
 
@@ -726,7 +764,7 @@ Cuidados de segurança:
 - **A análise é síncrona:** o `POST /api/feedbacks` espera a IA responder. Com o provedor lento, quem envia espera (o formulário avisa "Ainda enviando..."). Gravar na hora e analisar depois é a evolução natural.
 - **Formulário público e chave de ingestão:** um site público não guarda segredo, então com `INGEST_API_KEY` ligada o formulário recebe `401`. Há dois caminhos: receber pelo seu backend e reenviar com a chave, ou ligar a **ingestão pública** (`INGEST_PUBLIC_ORIGINS`), que aceita envios sem chave das origens listadas sob rate limit próprio e teto diário. Como o `Origin` é forjável fora de um navegador, isso não autentica ninguém — a proteção é o limite de taxa e o teto de gasto.
 - **Sem histórico de correções:** a troca manual de sentimento ou de spam fica só numa linha do log do servidor; não há registro de quem corrigiu o quê.
-- **Reanálise em lote só pela linha de comando:** o painel reanalisa um feedback por vez.
+- **Reanálise em lote pelo painel é pequena e síncrona:** um feedback por vez ou um lote de até 10 (`POST /api/feedbacks/reanalyze-pending`); volumes maiores pela linha de comando (`flask reanalyze-pending`).
 - **O painel Vue não tem testes de componente**, só typecheck, lint e build.
 - **Camadas gratuitas de LLM têm limites** de requisições e de tokens por minuto e por dia. Meça com `evals/` antes de usar um modelo gratuito como principal.
 

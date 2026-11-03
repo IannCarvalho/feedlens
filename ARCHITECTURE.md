@@ -358,14 +358,23 @@ tags de formatação, sem links, imagens ou atributos.
 | | Desenvolvimento | Docker Compose | Produção |
 |---|---|---|---|
 | Servidor | `flask run` (só `127.0.0.1`, sem debug) | gunicorn, 1 worker `gthread` | gunicorn (`wsgi:app`), `FLASK_ENV=production` |
-| Banco | SQLite (`instance/feedlens.db`) | PostgreSQL do compose | PostgreSQL (`DATABASE_URL`) |
+| Banco | SQLite (`instance/feedlens.db`) | PostgreSQL do compose | PostgreSQL no Neon (`DATABASE_URL`, segredo no host) |
 | Painel | `python scripts/fetch_panel.py` (ou `npm run dev` no repositório do painel) | baixado do release num estágio do `Dockerfile`, com checksum | idem |
-| Formulário | `npm start` (porta 4200), no repositório do formulário | fora do compose | site estático (ou a imagem nginx do formulário) em outro subdomínio |
+| Formulário | `npm start` (porta 4200), no repositório do formulário | fora do compose | site estático no Vercel |
 
-- **Migrations versionadas** (Alembic, `migrations/versions/`): `flask db upgrade` na
-  primeira execução e a cada release. O CI roda as migrations (subir, `flask db
-  check`, descer, subir) num PostgreSQL de verdade, porque o SQLite dos testes não
-  pega estouro de `VARCHAR`, chave estrangeira nem `timestamptz`.
+- **Migrations versionadas** (Alembic, `migrations/versions/`): rodam no **arranque do
+  contêiner** (`docker/entrypoint.sh`: `flask db upgrade`, depois `exec gunicorn`). Não
+  ficam num pre-deploy do host porque o plano free do Render não o oferece, e assim o
+  mesmo contrato vale em qualquer host. `flask db upgrade` é idempotente; uma falha é
+  registrada no log mas não impede o servidor de subir. O CI roda as migrations (subir,
+  `flask db check`, descer, subir) num PostgreSQL de verdade, porque o SQLite dos testes
+  não pega estouro de `VARCHAR`, chave estrangeira nem `timestamptz`.
+- **Banco em produção: Neon free.** Foi escolhido por não expirar (o Postgres free do
+  Render expira em 30 dias) e por guardar os dados que o disco efêmero do Render free
+  perde a cada deploy. O compute dorme após 5 min sem uso e derruba as conexões abertas;
+  por isso, com Postgres, o engine usa `pool_pre_ping` e recicla conexões a cada 5 min
+  (`app/config.py`). O `warmUp()` do formulário, que chama o `/health`, acorda app e
+  banco antes do envio.
 - **Imagem Docker em dois estágios:** o primeiro baixa o release do painel e confere o
   checksum fixado no `Dockerfile` (o build falha se não bater); só o resultado
   estático segue para a imagem final, então o host não precisa de Node. Exige
@@ -378,8 +387,9 @@ tags de formatação, sem links, imagens ou atributos.
   HTTPS (o cookie é `Secure`), `CORS_ORIGINS` com a origem do formulário e, se houver
   mais de um worker, os passos de §3.6.
 
-O repositório não traz configuração de uma hospedagem específica: o `Dockerfile` e o
-`docker-compose.yml` são o contrato de deploy.
+O `Dockerfile` (com o `docker/entrypoint.sh`) é o contrato de deploy. O
+[`render.yaml`](./render.yaml) descreve o deploy de referência no Render e declara os
+segredos sem guardar valores; o passo a passo está no README (*Deploy em produção*).
 
 ---
 
@@ -413,10 +423,11 @@ O repositório não traz configuração de uma hospedagem específica: o `Docker
   uma vez, a linha de comando `flask reanalyze-pending` continua sendo o caminho.
 - **O painel Vue não tem testes de componente.** É validado por typecheck, lint e
   build no repositório do painel; o formulário Angular tem testes com Vitest no dele.
-- **O contrato entre os repositórios é mantido à mão.** Não há OpenAPI nem teste que
-  compare as respostas da API com `api.ts` do painel; uma resposta alterada só é
-  pega por revisão. Gerar o contrato e validá-lo com um teste de contrato é a
-  evolução natural.
+- **O contrato entre os repositórios é fixado por commit.** O `openapi.yaml` é validado
+  contra as respostas reais por `tests/test_openapi_contract.py`, e o painel gera seus
+  tipos a partir dele num commit fixo (`api-spec.version`). Subir esse SHA no painel é
+  um passo manual: uma mudança de contrato aqui só chega ao typecheck do painel quando
+  alguém atualiza o pin.
 
 ---
 
