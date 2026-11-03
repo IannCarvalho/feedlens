@@ -228,6 +228,18 @@ class Config:
     # Default '*' porque a API é pública (ingestão + consulta de feedbacks).
     CORS_ORIGINS: List[str] = get_env_list('CORS_ORIGINS', ['*'])
 
+    # Header de onde ler o IP real do cliente (ex.: CF-Connecting-IP). Vazio =
+    # comportamento histórico (usa request.remote_addr direto). Atrás de um
+    # proxy que SOBRESCREVE este header (Cloudflare), ele traz o IP do visitante
+    # em vez do 127.0.0.1 do proxy, então o rate limit volta a ser por-IP em vez
+    # de global. Só confie num header que o proxy à sua frente SEMPRE reescreve;
+    # fora disso é forjável. Ver app/client_ip.py.
+    TRUSTED_CLIENT_IP_HEADER: str = os.environ.get('TRUSTED_CLIENT_IP_HEADER', '').strip()
+
+    # Headers de segurança HTTP aplicados em todas as respostas (after_request).
+    # true por padrão; desligue só para depurar um header específico.
+    SECURITY_HEADERS_ENABLED: bool = get_env_bool('SECURITY_HEADERS_ENABLED', True)
+
     @classmethod
     def is_development(cls) -> bool:
         """Check if running in development environment"""

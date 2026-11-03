@@ -67,6 +67,14 @@ services:
         sync: false
 
       # --- Config não-secreta: valores reais de produção, versionados ---
+      # IP real do cliente para o rate limit. Todo tráfego do Render chega pela
+      # Cloudflare, que SOBRESCREVE CF-Connecting-IP com o IP do visitante (o
+      # cliente não consegue forjá-lo, pois o Render só é alcançável via
+      # Cloudflare). Sem isto, remote_addr é sempre 127.0.0.1 (o proxy) e os
+      # limites por-IP (login, ingestão pública) viram globais. Fora deste
+      # cenário com proxy confiável, deixe vazio (usa remote_addr).
+      - key: TRUSTED_CLIENT_IP_HEADER
+        value: CF-Connecting-IP
       # Origem exata do form público (Vercel). A mesma URL nas duas: sem
       # CORS_ORIGINS o navegador bloqueia a resposta; sem INGEST_PUBLIC_ORIGINS
       # o POST sem chave recebe 401 (ingest_key_required). Só origem, sem
