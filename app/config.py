@@ -213,6 +213,13 @@ class Config:
     SCHEDULER_ENABLED: bool = get_env_bool('SCHEDULER_ENABLED', False)
     SCHEDULER_TIMEZONE: str = os.environ.get('SCHEDULER_TIMEZONE', 'America/Sao_Paulo')
 
+    # Retenção de feedbacks (ciclo de vida/LGPD): apaga feedbacks com
+    # ``created_at`` mais antigo que N dias. 0 (padrão) = desligado, nada é
+    # apagado automaticamente. Quando N>0 e SCHEDULER_ENABLED, um job diário às
+    # 03:00 (SCHEDULER_TIMEZONE) faz a limpeza; a qualquer momento se roda à mão
+    # com ``flask purge-old-feedbacks`` (com ``--dry-run`` para só contar).
+    FEEDBACK_RETENTION_DAYS: int = get_env_int('FEEDBACK_RETENTION_DAYS', 0)
+
     # Rate limiting (Flask-Limiter)
     # Liga/desliga o limitador globalmente (desligado nos testes).
     RATELIMIT_ENABLED: bool = get_env_bool('RATELIMIT_ENABLED', True)

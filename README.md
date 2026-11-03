@@ -804,3 +804,5 @@ Cuidados de segurança:
 ## Licença
 
 Distribuído sob a licença MIT. Veja o arquivo [LICENSE](LICENSE) para mais detalhes.
+
+Privacidade e ciclo de vida dos dados (o que é tratado, onde fica, suboperadores e como apagar): veja [docs/PRIVACY.md](docs/PRIVACY.md).

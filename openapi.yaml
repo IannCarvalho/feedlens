@@ -215,6 +215,44 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+    delete:
+      tags: [feedbacks]
+      summary: Apaga um feedback e as funcionalidades pedidas dele (ciclo de vida/LGPD).
+      description: >
+        Mesma protecao do PATCH: sessao do painel + CSRF. Nao aceita
+        API_READ_TOKEN. Apaga tambem as requested_features. Sucesso devolve 204
+        sem corpo.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/XCsrfToken'
+      responses:
+        '204':
+          description: Feedback apagado (sem corpo).
+        '400':
+          description: id malformado (nao e UUID).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Nao autenticado no painel.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: DASHBOARD_PASSWORD ausente (auth_not_configured) ou CSRF invalido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Feedback nao encontrado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /api/feedbacks/{feedback_id}/reanalyze:
     parameters:

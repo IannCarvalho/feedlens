@@ -226,9 +226,10 @@ def init_scheduler(app: Flask) -> None:
         return
 
     if not scheduler.running:
-        from app.scheduling import schedule_monthly_summary
+        from app.scheduling import schedule_monthly_summary, schedule_retention_purge
         try:
             schedule_monthly_summary(scheduler, app)
+            schedule_retention_purge(scheduler, app)
             scheduler.start()
             logger.info('Background scheduler started successfully')
         except Exception as e:
@@ -268,6 +269,9 @@ def create_app(config_class: Type[Config] = Config) -> Flask:
         from app.cli import register_analysis_cli, register_vault_cli
         register_vault_cli(app)
         register_analysis_cli(app)
+
+        from app.cli import register_retention_cli
+        register_retention_cli(app)
 
         logger.info(f'Application started in {config_class.FLASK_ENV} mode')
 
