@@ -666,9 +666,20 @@ Para um app de baixo tráfego, o Neon é o único dos quatro que guarda os dados
    | `SECRET_KEY` | aleatória, 32+ caracteres; trocá-la derruba as sessões |
    | `DASHBOARD_PASSWORD` | senha do painel; forte antes de divulgar a URL |
    | `FEEDLENS_ENCRYPTION_KEY` | chave Fernet (veja [Chaves de Provedor](#chaves-de-provedor-cofre)); não troque sem rotação |
+   | `OPENROUTER_API_KEY`, `GROQ_API_KEY` | chaves dos provedores gratuitos da cadeia `LLM_MODELS` |
+   | `INGEST_API_KEY` | chave de ingestão (`X-API-Key`) para clientes servidor-a-servidor |
 
    No campo *Value* vai só o valor, sem o `NOME=` na frente.
-4. **Formulário público:** defina `INGEST_PUBLIC_ORIGINS` e `CORS_ORIGINS` com a URL exata do formulário (ex.: `https://feedlens-tau.vercel.app`). O padrão de `CORS_ORIGINS` é `*` para não atrapalhar o desenvolvimento local; em produção, restrinja.
+4. **Config não secreta (já versionada no `render.yaml`):** o Blueprint aplica os valores de produção, então eles não precisam ser digitados à mão.
+
+   | Variável | Valor | Por quê |
+   |---|---|---|
+   | `CORS_ORIGINS` | `https://feedlens-tau.vercel.app` | sem ela, o navegador bloqueia a resposta ao form |
+   | `INGEST_PUBLIC_ORIGINS` | `https://feedlens-tau.vercel.app` | sem ela, o POST do form sem chave recebe `401` |
+   | `INGEST_PUBLIC_DAILY_CAP` | `50` | igual às 50 chamadas/dia dos modelos `:free` do OpenRouter sem créditos |
+   | `LLM_MODELS` | `openrouter/google/gemma-4-31b-it:free,groq/openai/gpt-oss-20b,openrouter/openrouter/free` | gemma primeiro; Groq cobre o `429` do gemma; o roteador grátis é a última reserva |
+
+   As origens levam só esquema e host, sem caminho. O padrão de `CORS_ORIGINS` no código continua `*` para não atrapalhar o desenvolvimento local. Ao trocar a URL do form, mude o `render.yaml` (num PR) em vez do painel do Render, para os dois não divergirem.
 5. **Deploy e checagem:** depois do deploy, o log deve mostrar `entrypoint: migrations aplicadas.`. Confira `GET /health` (`200`, com o banco) e entre no painel.
 
 **Conexões e o banco que dorme.** Quando o Neon suspende o compute, as conexões abertas caem. Com um Postgres, o app liga `pool_pre_ping` (testa a conexão antes de usar e troca a que caiu) e recicla as conexões a cada 5 minutos (`app/config.py`); o SQLite continua com os padrões. URLs no esquema antigo `postgres://` são aceitas e convertidas para `postgresql://`.
