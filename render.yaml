@@ -84,3 +84,35 @@ services:
       # última reserva). Numa linha só: uma quebra derruba o boot.
       - key: LLM_MODELS
         value: openrouter/google/gemma-4-31b-it:free,groq/openai/gpt-oss-20b,openrouter/openrouter/free
+
+      # --- Resumo semanal por e-mail (segunda, 08:00, America/Sao_Paulo) ---
+      # O Render free BLOQUEIA a saída SMTP nas portas 25, 465 e 587 (desde
+      # 26/09/2025), então Gmail/587 dá timeout. O relay do Brevo (grátis,
+      # 300/dia) aceita a 2525 com STARTTLS.
+      - key: EMAIL_HOST
+        value: smtp-relay.brevo.com
+      - key: EMAIL_PORT
+        value: "2525"
+      - key: EMAIL_USE_TLS
+        value: "true"
+      # Link do painel no corpo do e-mail.
+      - key: APP_BASE_URL
+        value: https://feedlens.onrender.com
+      # Um único worker (gunicorn.conf.py), então o agendador pode rodar no
+      # próprio web sem mandar o e-mail em dobro. Sem as credenciais abaixo
+      # o job só registra "Incomplete email settings" e não envia nada.
+      - key: SCHEDULER_ENABLED
+        value: "true"
+      # Login SMTP do Brevo (xxx@smtp-brevo.com) e a SMTP key (não é a senha
+      # da conta nem a API key): segredos.
+      - key: EMAIL_USER
+        sync: false
+      - key: EMAIL_PASSWORD
+        sync: false
+      # Endereços pessoais: fora do repo público para não virarem alvo de spam.
+      # EMAIL_FROM = remetente verificado no Brevo (Senders); EMAIL_RECIPIENTS
+      # = destinatários separados por vírgula.
+      - key: EMAIL_FROM
+        sync: false
+      - key: EMAIL_RECIPIENTS
+        sync: false

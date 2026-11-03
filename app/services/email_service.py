@@ -278,10 +278,12 @@ def send_weekly_summary_email():
     # Generate email content (LLM with graceful fallback to the static template)
     email_content = generate_email_content_llm(stats)
 
-    # Create message
+    # Create message. O login (EMAIL_USER) e o remetente podem ser diferentes:
+    # num relay como o Brevo o login é técnico e o From é o endereço verificado.
+    sender = Config.EMAIL_FROM or Config.EMAIL_USER
     msg = MIMEMultipart('alternative')
     msg['Subject'] = f"Resumo semanal de feedbacks - FeedLens ({datetime.now().strftime('%Y-%m-%d')})"
-    msg['From'] = Config.EMAIL_USER
+    msg['From'] = sender
     msg['To'] = ", ".join(Config.EMAIL_RECIPIENTS)
 
     # Add HTML content
@@ -298,8 +300,8 @@ def send_weekly_summary_email():
                 server.starttls(context=ssl.create_default_context())
             server.login(Config.EMAIL_USER, Config.EMAIL_PASSWORD)
 
-            # Send email
-            server.sendmail(Config.EMAIL_USER,
+            # Send email (envelope = o mesmo remetente do cabeçalho From)
+            server.sendmail(sender,
                             Config.EMAIL_RECIPIENTS, msg.as_string())
 
         logger.info(

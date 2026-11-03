@@ -290,3 +290,30 @@ def test_gunicorn_config_is_single_threaded_worker_on_platform_port(monkeypatch)
     assert settings["workers"] == 1
     assert settings["worker_class"] == "gthread"
     assert settings["threads"] >= 2
+
+
+# --- remetente (EMAIL_FROM) ------------------------------------------------------
+
+def _sent_with(app, email_from):
+    with patch.object(Config, "EMAIL_FROM", email_from), patch(SMTP) as smtp_cls, \
+            patch(LLM_EMAIL, side_effect=email_service.generate_email_content):
+        assert email_service.send_weekly_summary_email() is True
+    server = smtp_cls.return_value.__enter__.return_value
+    envelope_from, recipients, raw = server.sendmail.call_args.args
+    return server, envelope_from, recipients, raw
+
+
+def test_sender_defaults_to_email_user(app, email_config):
+    server, envelope_from, recipients, raw = _sent_with(app, None)
+    server.login.assert_called_once_with("bot@example.com", "senha")
+    assert envelope_from == "bot@example.com"
+    assert "From: bot@example.com" in raw
+    assert recipients == ["time@example.com"]
+
+
+def test_email_from_overrides_sender_but_not_login(app, email_config):
+    """Relay (ex. Brevo): login técnico, remetente verificado diferente."""
+    server, envelope_from, _, raw = _sent_with(app, "resumo@feedlens.app")
+    server.login.assert_called_once_with("bot@example.com", "senha")
+    assert envelope_from == "resumo@feedlens.app"
+    assert "From: resumo@feedlens.app" in raw

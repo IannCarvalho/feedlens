@@ -638,6 +638,21 @@ O resumo sai toda segunda-feira às 8h (fuso `SCHEDULER_TIMEZONE`, padrão `Amer
 
 O SMTP usa STARTTLS com certificado verificado e `EMAIL_TIMEOUT` (padrão 30s). `APP_BASE_URL` define o link do painel no e-mail. Sem configuração de e-mail o app sobe normalmente (inclusive em produção) e só registra um aviso.
 
+O login (`EMAIL_USER`) e o remetente podem ser diferentes: `EMAIL_FROM` define o `From` e o envelope. Vazio, vale o `EMAIL_USER`, o que serve ao Gmail.
+
+### E-mail no Render free (Brevo)
+
+O Render free **bloqueia a saída SMTP nas portas 25, 465 e 587** desde 26/09/2025, então `smtp.gmail.com:587` dá timeout. O deploy de referência usa o relay do [Brevo](https://www.brevo.com/free-smtp-server/) (grátis, 300 e-mails/dia), que aceita a porta 2525 com STARTTLS. `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USE_TLS`, `APP_BASE_URL` e `SCHEDULER_ENABLED` já estão no `render.yaml`. No painel do Render faltam:
+
+| Variável | Onde pegar |
+|---|---|
+| `EMAIL_USER` | Brevo → *SMTP & API* → *SMTP*: o **Login** (`xxx@smtp-brevo.com`) |
+| `EMAIL_PASSWORD` | mesma tela: **Generate a new SMTP key** (não é a senha da conta nem a API key) |
+| `EMAIL_FROM` | um remetente verificado em *Senders* (o Brevo manda um código de confirmação) |
+| `EMAIL_RECIPIENTS` | quem recebe o resumo, separado por vírgula |
+
+**O Render free dorme** após 15 minutos sem acesso, e o agendador só roda com o serviço acordado. O job tolera até 1h de atraso (`misfire_grace_time`), então basta um pinger grátis (ex.: [cron-job.org](https://cron-job.org)) chamando `GET /health` às 07:55 de segunda, no fuso de São Paulo.
+
 ## Deploy em produção (Render + Neon)
 
 O deploy de referência roda tudo em camadas gratuitas: o backend como serviço web Docker no **Render** (plano free), o banco **PostgreSQL no Neon** (plano free) e o formulário público no Vercel (veja o README do [feedlens-form](https://github.com/IannCarvalho/feedlens-form)). O serviço está descrito em [`render.yaml`](render.yaml) (Blueprint).
