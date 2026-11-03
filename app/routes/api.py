@@ -336,6 +336,31 @@ def review_feedback(feedback_id):
     return jsonify(feedback.to_dict()), 200
 
 
+@api.route('/feedbacks/<feedback_id>', methods=['DELETE'])
+@panel_write_required
+def delete_feedback(feedback_id):
+    """
+    Apaga um feedback e as funcionalidades pedidas dele (ciclo de vida/LGPD).
+
+    Mesma proteção do PATCH (sessão do painel + CSRF; ``API_READ_TOKEN`` não
+    vale): apagar dado pessoal é ação de quem opera o painel. UUID inválido ->
+    400; inexistente -> 404; sucesso -> 204 sem corpo. O texto do feedback NUNCA
+    é registrado no log — só o id.
+    """
+    try:
+        uuid.UUID(str(feedback_id))
+    except (ValueError, AttributeError, TypeError):
+        return jsonify({'error': 'Field "id" must be a valid UUID'}), 400
+
+    feedback = FeedbackService.get_feedback_by_id(feedback_id)
+    if feedback is None:
+        return jsonify({'error': 'Feedback not found'}), 404
+
+    FeedbackService.delete_feedback(feedback)
+    logger.info('Feedback id=%s apagado (LGPD)', feedback_id)
+    return '', 204
+
+
 @api.route('/feedbacks/<feedback_id>/reanalyze', methods=['POST'])
 @panel_write_required
 def reanalyze_feedback(feedback_id):

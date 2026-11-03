@@ -30,6 +30,7 @@ from flask import Flask
 logger = logging.getLogger(__name__)
 
 JOB_ID = 'monthly_summary_email'
+RETENTION_JOB_ID = 'retention_purge_feedbacks'
 
 
 def run_monthly_summary(app: Flask) -> bool:
@@ -65,6 +66,53 @@ def schedule_monthly_summary(scheduler: BaseScheduler, app: Flask) -> None:
     logger.info('Monthly summary scheduled for day 1 of every month at 08:00 (%s)', timezone)
 
 
+def run_retention_purge(app: Flask) -> int:
+    """Apaga feedbacks fora da janela de retenção, num app context próprio.
+
+    Igual ao resumo mensal, a thread do APScheduler não tem contexto. Usa
+    ``FEEDBACK_RETENTION_DAYS``; com 0 não apaga nada. Loga só a contagem,
+    nunca texto de feedback. Devolve quantos foram apagados.
+    """
+    from datetime import datetime, timedelta, timezone as _tz
+
+    from app.services.feedback_service import FeedbackService
+
+    with app.app_context():
+        days = app.config.get('FEEDBACK_RETENTION_DAYS', 0)
+        if days <= 0:
+            return 0
+        cutoff = datetime.now(_tz.utc) - timedelta(days=days)
+        deleted = FeedbackService.purge_older_than(cutoff)
+        logger.info('Retenção: %d feedback(s) mais antigo(s) que %d dia(s) apagado(s)',
+                    deleted, days)
+        return deleted
+
+
+def schedule_retention_purge(scheduler: BaseScheduler, app: Flask) -> None:
+    """Agenda a limpeza de retenção para todo dia às 03:00 no fuso configurado.
+
+    Só registra o job quando ``FEEDBACK_RETENTION_DAYS`` > 0; com 0 (padrão) a
+    retenção está desligada e nenhum job é criado.
+    """
+    if app.config.get('FEEDBACK_RETENTION_DAYS', 0) <= 0:
+        logger.info('Retention purge disabled (FEEDBACK_RETENTION_DAYS=0)')
+        return
+    timezone = app.config.get('SCHEDULER_TIMEZONE', 'America/Sao_Paulo')
+    scheduler.add_job(
+        run_retention_purge,
+        'cron',
+        args=[app],
+        hour=3,
+        minute=0,
+        timezone=timezone,
+        id=RETENTION_JOB_ID,
+        replace_existing=True,
+        coalesce=True,
+        misfire_grace_time=3600,
+    )
+    logger.info('Retention purge scheduled daily at 03:00 (%s)', timezone)
+
+
 def register_cli(app: Flask) -> None:
     """Registra ``flask send-monthly-summary`` (teste manual ou cron externo)."""
 
@@ -90,6 +138,7 @@ def main() -> None:
     app = create_app(DedicatedSchedulerConfig)
     scheduler = BlockingScheduler()
     schedule_monthly_summary(scheduler, app)
+    schedule_retention_purge(scheduler, app)
     logger.info('Dedicated scheduler process started')
     scheduler.start()
 

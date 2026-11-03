@@ -1,4 +1,5 @@
 from typing import List, Optional, Dict
+from datetime import datetime
 from app import db
 from app.models.feedback import (
     ANALYSIS_ANALYZED,
@@ -7,7 +8,7 @@ from app.models.feedback import (
     Feedback,
     RequestedFeature,
 )
-from sqlalchemy import desc, false, func, true
+from sqlalchemy import desc, false, func, select, true
 from sqlalchemy.orm import selectinload
 
 # O que a listagem faz com o que a IA marcou como spam.
@@ -207,3 +208,43 @@ class FeedbackService:
         if changed:
             db.session.commit()
         return changed
+
+    @staticmethod
+    def delete_feedback(feedback: Feedback) -> None:
+        """Apaga um feedback e as funcionalidades pedidas dele.
+
+        O relacionamento ``requested_features`` tem ``cascade='all, delete-
+        orphan'``, então o ORM apaga as filhas junto no mesmo commit. Usada pelo
+        ``DELETE /api/feedbacks/<id>`` (ciclo de vida/LGPD).
+        """
+        db.session.delete(feedback)
+        db.session.commit()
+
+    @staticmethod
+    def count_older_than(cutoff: datetime) -> int:
+        """Quantos feedbacks têm ``created_at`` anterior a ``cutoff``."""
+        return db.session.query(func.count(Feedback.id)).filter(
+            Feedback.created_at < cutoff).scalar() or 0
+
+    @staticmethod
+    def purge_older_than(cutoff: datetime) -> int:
+        """Apaga os feedbacks com ``created_at`` anterior a ``cutoff``.
+
+        Apaga antes as ``requested_features`` das linhas alvo (um DELETE com
+        subconsulta, sem depender do cascade do ORM nem carregar cada linha) e
+        depois os feedbacks. Devolve quantos feedbacks foram apagados. Não loga
+        nenhum texto de feedback. Usada pela retenção (``purge-old-feedbacks`` e
+        o job diário).
+        """
+        count = FeedbackService.count_older_than(cutoff)
+        if count == 0:
+            return 0
+        old_ids = select(Feedback.id).where(Feedback.created_at < cutoff)
+        db.session.query(RequestedFeature).filter(
+            RequestedFeature.feedback_id.in_(old_ids)
+        ).delete(synchronize_session=False)
+        db.session.query(Feedback).filter(
+            Feedback.created_at < cutoff
+        ).delete(synchronize_session=False)
+        db.session.commit()
+        return count

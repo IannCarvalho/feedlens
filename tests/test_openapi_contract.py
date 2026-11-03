@@ -48,6 +48,7 @@ COVERED = {
     ("get", "/api/feedbacks"),
     ("get", "/api/feedbacks/{feedback_id}"),
     ("patch", "/api/feedbacks/{feedback_id}"),
+    ("delete", "/api/feedbacks/{feedback_id}"),
     ("post", "/api/feedbacks/{feedback_id}/reanalyze"),
     ("post", "/api/feedbacks/reanalyze-pending"),
     ("get", "/api/stats"),
@@ -291,6 +292,38 @@ def test_patch_unauthenticated_contract(spec, registry, auth_client):
     assert resp.status_code == 401
     assert_matches(
         spec, registry, "patch", "/api/feedbacks/{feedback_id}", 401, resp.get_json()
+    )
+
+
+def test_delete_no_content_contract(spec, registry, auth_client):
+    """DELETE: 204 sem corpo quando logado + CSRF."""
+    fid = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+    login(auth_client, PASSWORD)
+    _ingest(auth_client, fid, "apagar", POSITIVE)
+    token = csrf_token(auth_client)
+    resp = auth_client.delete(f"/api/feedbacks/{fid}", headers={"X-CSRF-Token": token})
+    assert resp.status_code == 204
+    assert_matches(
+        spec, registry, "delete", "/api/feedbacks/{feedback_id}", 204, resp.get_data()
+    )
+
+
+def test_delete_bad_uuid_contract(spec, registry, auth_client):
+    login(auth_client, PASSWORD)
+    token = csrf_token(auth_client)
+    resp = auth_client.delete("/api/feedbacks/nao-e-uuid", headers={"X-CSRF-Token": token})
+    assert resp.status_code == 400
+    assert_matches(
+        spec, registry, "delete", "/api/feedbacks/{feedback_id}", 400, resp.get_json()
+    )
+
+
+def test_delete_unauthenticated_contract(spec, registry, auth_client):
+    fid = "dddddddd-dddd-dddd-dddd-dddddddddddd"
+    resp = auth_client.delete(f"/api/feedbacks/{fid}")
+    assert resp.status_code == 401
+    assert_matches(
+        spec, registry, "delete", "/api/feedbacks/{feedback_id}", 401, resp.get_json()
     )
 
 

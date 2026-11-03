@@ -80,6 +80,45 @@ def register_analysis_cli(app: Flask) -> None:
             raise click.exceptions.Exit(1)
 
 
+def register_retention_cli(app: Flask) -> None:
+    """Registra ``flask purge-old-feedbacks`` (retenção/LGPD)."""
+
+    @app.cli.command('purge-old-feedbacks')
+    @click.option('--days', type=click.IntRange(min=1), default=None,
+                  help='Apaga feedbacks mais antigos que N dias. Padrão: '
+                       'FEEDBACK_RETENTION_DAYS do config.')
+    @click.option('--dry-run', is_flag=True, default=False,
+                  help='Só mostra quantos seriam apagados, sem apagar nada.')
+    def purge_old_feedbacks_command(days, dry_run):
+        """Apaga feedbacks com created_at mais antigo que N dias (ciclo de vida).
+
+        Sem ``--days``, usa ``FEEDBACK_RETENTION_DAYS``; se esse for 0 (padrão,
+        retenção desligada) não apaga nada e avisa. ``--dry-run`` só conta.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        from app.services.feedback_service import FeedbackService
+
+        retention = days if days is not None else app.config.get(
+            'FEEDBACK_RETENTION_DAYS', 0)
+        if retention <= 0:
+            click.echo(
+                'Retenção desligada (FEEDBACK_RETENTION_DAYS=0). Use --days N '
+                'para apagar mesmo assim.')
+            return
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=retention)
+        if dry_run:
+            count = FeedbackService.count_older_than(cutoff)
+            click.echo(
+                f'{count} feedback(s) mais antigo(s) que {retention} dia(s) '
+                f'seriam apagados (dry-run, nada foi apagado).')
+            return
+
+        deleted = FeedbackService.purge_older_than(cutoff)
+        click.echo(f'{deleted} feedback(s) mais antigo(s) que {retention} dia(s) apagado(s).')
+
+
 def register_vault_cli(app: Flask) -> None:
     """Registra ``flask rotate-llm-keys``."""
 
