@@ -43,10 +43,26 @@ def get_vault() -> Vault:
     return Vault.from_settings(current_app.config)
 
 
-def list_credentials() -> list[ProviderCredential]:
+def _ordered_credentials() -> list[ProviderCredential]:
+    """Leitura estrita (levanta SQLAlchemyError): para quem vai escrever depois."""
     return list(db.session.scalars(
         select(ProviderCredential).order_by(
             ProviderCredential.priority, ProviderCredential.created_at)))
+
+
+def list_credentials() -> list[ProviderCredential]:
+    """Chaves salvas, na ordem da cadeia. Falha de leitura degrada para ``[]``.
+
+    Mesmo critério de ``stored_chain``: tabela ainda não migrada ou banco fora
+    não pode virar 500 na tela de Provedores.
+    """
+    try:
+        return _ordered_credentials()
+    except SQLAlchemyError:
+        db.session.rollback()
+        logger.warning('Could not read stored provider keys; listing none.',
+                       exc_info=True)
+        return []
 
 
 def get_credential(credential_id: str) -> Optional[ProviderCredential]:
@@ -141,7 +157,9 @@ def reorder(ids: list[str]) -> list[ProviderCredential]:
 
     Levanta ValueError se algum id for desconhecido ou repetido.
     """
-    rows = {str(row.id): row for row in list_credentials()}
+    # Leitura estrita: com o banco fora, um ``[]`` aqui viraria "id
+    # desconhecido" (400) em vez do erro real.
+    rows = {str(row.id): row for row in _ordered_credentials()}
     if len(set(ids)) != len(ids):
         raise ValueError('ids repetidos')
     unknown = [item for item in ids if item not in rows]

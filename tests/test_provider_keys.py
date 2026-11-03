@@ -427,6 +427,23 @@ def test_operator_chain_falls_back_to_env_when_the_table_is_unreadable(secured_a
     assert [c.source for c in chain] == ["server"]
 
 
+def test_list_providers_degrades_to_empty_when_the_table_is_unreadable(admin):
+    error = OperationalError("select", {}, Exception("no such table"))
+    with patch.object(db.session, "scalars", side_effect=error):
+        response = admin.get(BASE)
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["vault_enabled"] is True
+    assert body["providers"] == []
+
+
+def test_reorder_still_raises_when_the_table_is_unreadable(secured_app):
+    error = OperationalError("select", {}, Exception("no such table"))
+    with patch.object(db.session, "scalars", side_effect=error):
+        with pytest.raises(OperationalError):
+            store.reorder([])
+
+
 def test_analyzer_uses_stored_keys_before_environment_keys(secured_app):
     secured_app.config.update(OPENAI_API_KEY="sk-env-key-123456789")
     _store("anthropic", "claude-haiku-4-5", ANTHROPIC_KEY, priority=1)
