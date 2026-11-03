@@ -211,6 +211,41 @@ def register_blueprints(app: Flask) -> None:
         return error
 
 
+def init_sentry(app: Flask) -> None:
+    """
+    Inicializa o Sentry (observabilidade de erros) — OPCIONAL.
+
+    Só faz algo quando ``SENTRY_DSN`` está definido; sem DSN, retorna sem
+    importar nada e o app roda exatamente como antes. ``sentry-sdk[flask]`` é
+    uma dependência fixa, mas a inicialização é sempre condicional.
+
+    PII fica DESLIGADA de propósito: ``send_default_pii=False`` e
+    ``include_local_variables=False``, porque os feedbacks carregam texto de
+    usuário que não deve sair para o Sentry. O tracing de performance usa
+    ``SENTRY_TRACES_SAMPLE_RATE`` (padrão 0) e o ``environment`` é o FLASK_ENV.
+
+    Args:
+        app: Flask application instance
+    """
+    dsn = app.config.get('SENTRY_DSN')
+    if not dsn:
+        logger.info('Sentry disabled (SENTRY_DSN not set)')
+        return
+
+    import sentry_sdk
+    from sentry_sdk.integrations.flask import FlaskIntegration
+
+    sentry_sdk.init(
+        dsn=dsn,
+        integrations=[FlaskIntegration()],
+        send_default_pii=False,
+        include_local_variables=False,
+        traces_sample_rate=app.config.get('SENTRY_TRACES_SAMPLE_RATE', 0.0),
+        environment=app.config.get('FLASK_ENV'),
+    )
+    logger.info('Sentry initialized (environment=%s)', app.config.get('FLASK_ENV'))
+
+
 def init_scheduler(app: Flask) -> None:
     """
     Initialize background task scheduler
@@ -256,6 +291,10 @@ def create_app(config_class: Type[Config] = Config) -> Flask:
     try:
         # Validate configuration
         validate_config(config_class)
+
+        # Observabilidade de erros (opcional): antes do resto, para capturar
+        # também falhas de inicialização. No-op sem SENTRY_DSN.
+        init_sentry(app)
 
         # Initialize components
         init_extensions(app)
