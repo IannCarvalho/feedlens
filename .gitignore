@@ -77,3 +77,5 @@ logs/
 # Painel (SPA) instalado: baixado do release do feedlens-panel pelo Dockerfile
 # ou por `python scripts/fetch_panel.py`. Nao e comitado.
 app/static/spa/
+.neon
+node_modules/

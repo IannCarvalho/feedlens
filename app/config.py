@@ -63,6 +63,20 @@ def database_engine_options(url: str) -> dict:
     return {'pool_pre_ping': True, 'pool_recycle': POSTGRES_POOL_RECYCLE_SECONDS}
 
 
+def migration_database_url(app_url: str, unpooled_url: Optional[str]) -> str:
+    """URL usada pelas migrations (Alembic).
+
+    No Neon o app usa a conexão pooled (``-pooler``, PgBouncer em modo
+    transação) e as migrations devem usar a direta, que o Neon entrega em
+    ``DATABASE_URL_UNPOOLED``. A direta só vale quando o próprio app está num
+    Postgres: assim um ``DATABASE_URL_UNPOOLED`` esquecido no ambiente nunca
+    desvia a migração de um SQLite local (ou dos testes) para outro banco.
+    """
+    if unpooled_url and app_url.startswith('postgresql'):
+        return normalize_database_url(unpooled_url)
+    return app_url
+
+
 class Config:
     """Application configuration
 

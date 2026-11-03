@@ -40,13 +40,18 @@ services:
         sync: false
 
       # --- Banco: Postgres no Neon (free, sem prazo de expiração) ---
-      # Cole aqui a connection string do Neon (Dashboard > Connect), no formato
-      # postgresql://USUARIO:SENHA@HOST/BANCO?sslmode=require. É segredo: fica
-      # só no painel do Render. Sem ela o app cai no SQLite efêmero do
-      # contêiner (os dados somem a cada deploy/hibernação). O Postgres free
-      # do próprio Render foi descartado: expira 30 dias após a criação.
+      # Duas strings do Neon (neon env pull, ou Dashboard > Connect), ambas
+      # segredo, só no painel do Render:
+      #   DATABASE_URL          = a POOLED (host com -pooler): usada pelo app;
+      #   DATABASE_URL_UNPOOLED = a DIRETA: usada só pelas migrations do
+      #                           entrypoint (DDL não passa pelo PgBouncer).
+      # Sem DATABASE_URL o app cai no SQLite efêmero do contêiner (os dados
+      # somem a cada deploy/hibernação). O Postgres free do próprio Render foi
+      # descartado: expira 30 dias após a criação.
       # As tabelas são criadas pelo `flask db upgrade` do entrypoint.
       - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_URL_UNPOOLED
         sync: false
 
       # --- Config não-secreta (pode ficar no git) ---

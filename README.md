@@ -655,13 +655,14 @@ Para um app de baixo tráfego, o Neon é o único dos quatro que guarda os dados
 
 ### Passo a passo
 
-1. **Banco:** crie um projeto no [Neon](https://neon.com) e copie a connection string em *Connect*. Use a conexão **direta** (sem `-pooler` no host): o app tem um único processo e as migrations do Alembic não precisam passar pelo PgBouncer. O formato é `postgresql://USUARIO:SENHA@HOST/BANCO?sslmode=require`; o `sslmode=require` é obrigatório no Neon.
+1. **Banco:** crie um projeto no [Neon](https://neon.com). O Neon entrega duas strings: a **pooled** (host com `-pooler`, PgBouncer em modo transação) e a **direta**. O app usa a pooled em `DATABASE_URL`, e as migrations usam a direta em `DATABASE_URL_UNPOOLED` (`migrations/env.py` a escolhe só quando o app está num Postgres), como recomenda o Neon: DDL e o lock de versão do Alembic não devem passar pelo PgBouncer. Com a CLI do Neon (`neon init` + `neon deploy`, ou `neon env pull`), as duas vão para o `.env.local` (ignorado pelo git). O formato é `postgresql://USUARIO:SENHA@HOST/BANCO?sslmode=require&channel_binding=require`; o `psycopg2-binary` já traz uma libpq que suporta `channel_binding`.
 2. **Serviço:** no Render, *New > Blueprint* apontando para este repositório (ou use o serviço já existente). O plano free **não** aceita `preDeployCommand`; por isso as migrations rodam no arranque do contêiner ([`docker/entrypoint.sh`](docker/entrypoint.sh): `flask db upgrade` e depois o gunicorn). `flask db upgrade` é idempotente, então rodar a cada boot não custa nada num banco já migrado.
 3. **Segredos** (todos `sync: false` no `render.yaml`: o Render pede o valor uma vez e o guarda fora do git):
 
    | Variável | Valor |
    |---|---|
-   | `DATABASE_URL` | connection string do Neon |
+   | `DATABASE_URL` | string **pooled** do Neon (host com `-pooler`) |
+   | `DATABASE_URL_UNPOOLED` | string **direta** do Neon, usada só pelas migrations |
    | `SECRET_KEY` | aleatória, 32+ caracteres; trocá-la derruba as sessões |
    | `DASHBOARD_PASSWORD` | senha do painel; forte antes de divulgar a URL |
    | `FEEDLENS_ENCRYPTION_KEY` | chave Fernet (veja [Chaves de Provedor](#chaves-de-provedor-cofre)); não troque sem rotação |
