@@ -33,7 +33,12 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends postgresql-client-18
-          pg_dump --version
+          # O runner já traz um pg_dump 16 no PATH (wrapper do Ubuntu), que o
+          # Neon 18 recusa ("server version mismatch"). Usa o binário do 18 pelo
+          # caminho absoluto e o exporta para os passos seguintes.
+          PG_BIN=/usr/lib/postgresql/18/bin
+          "$PG_BIN/pg_dump" --version
+          echo "PG_DUMP=$PG_BIN/pg_dump" >> "$GITHUB_ENV"
 
       - name: Confere os segredos obrigatorios
         env:
@@ -66,7 +71,7 @@ jobs:
           set -euo pipefail
           out="feedlens-$(date -u +%Y%m%dT%H%M%SZ).dump.enc"
           echo "out=$out" >> "$GITHUB_ENV"
-          pg_dump --format=custom --no-owner "$NEON_BACKUP_DATABASE_URL" \
+          "$PG_DUMP" --format=custom --no-owner "$NEON_BACKUP_DATABASE_URL" \
             | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt \
                 -pass env:BACKUP_PASSPHRASE -out "$out"
           test -s "$out"
