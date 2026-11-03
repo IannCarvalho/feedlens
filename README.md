@@ -701,6 +701,45 @@ Para um app de baixo tráfego, o Neon é o único dos quatro que guarda os dados
 
 **Mudar de banco não migra dados.** Apontar `DATABASE_URL` para um banco novo começa com as tabelas vazias (criadas pelo `flask db upgrade`). As chaves de provedor salvas no cofre ficam no banco: depois da troca, cadastre-as de novo no painel.
 
+### Operação: health, backup e monitoramento
+
+**Dois health checks.** `GET /health` é readiness: faz `SELECT 1` e responde `200`/`503` conforme o banco. `GET /livez` é liveness puro — responde `200 {"status":"ok"}` sem tocar o banco, sem auth e sem rate-limit. O `healthCheckPath` do Render aponta para `/livez` de propósito: o Render bate nele a cada poucos segundos e, se fosse `/health`, cada ping faria `SELECT 1`, mantendo o compute do Neon acordado 24/7 e esgotando as 100 CU-h/mês do free. Use `/health` quando quiser confirmar o banco (ex.: a checagem manual pós-deploy); use `/livez` para probes de alta frequência.
+
+**Backup diário cifrado** ([`.github/workflows/db-backup.yml`](.github/workflows/db-backup.yml)). O instant restore do Neon free guarda só ~6 h de histórico, então um workflow roda todo dia às 06:00 UTC (e sob demanda via *Run workflow*), só na `main`. Ele instala o `postgresql-client-18` pelo repositório PGDG (o `pg_dump` precisa ser ≥ servidor, e o Neon roda PostgreSQL 18), faz `pg_dump --format=custom --no-owner` e cifra o resultado com AES-256 antes de guardar como artefato por 30 dias. A cifra é obrigatória porque **este repositório é público**: qualquer um pode baixar artefatos de um repo público, e o dump tem todos os dados. A URL do banco nunca aparece no log (`set +x`, sem `echo`), e o job falha alto se faltar algum segredo.
+
+Secrets do GitHub que o backup espera (*Settings > Secrets and variables > Actions*):
+
+| Secret | Valor |
+|---|---|
+| `NEON_BACKUP_DATABASE_URL` | string **direta** do Neon (sem `-pooler`) |
+| `BACKUP_PASSPHRASE` | frase-senha da cifra; guarde-a fora do repo — sem ela o dump é irrecuperável |
+
+Restaurar um backup (precisa do `postgresql-client-18` e da `BACKUP_PASSPHRASE`):
+
+```bash
+# 1. Baixe o artefato feedlens-db-backup da aba Actions e descompacte o .dump.enc
+# 2. Decifre com os MESMOS parâmetros usados na cifra:
+openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
+  -pass env:BACKUP_PASSPHRASE \
+  -in feedlens-AAAAMMDDThhmmssZ.dump.enc -out feedlens.dump
+# 3. Restaure num banco de destino (ATENÇÃO: --clean apaga os objetos existentes):
+pg_restore --clean --no-owner --dbname "$TARGET_DATABASE_URL" feedlens.dump
+```
+
+**Monitor de uptime** ([`.github/workflows/uptime.yml`](.github/workflows/uptime.yml)). A cada 15 min (e sob demanda) o workflow faz `curl -fsS --retry 3 --retry-delay 30 --max-time 90` em `https://feedlens.onrender.com/livez` e em `https://feedlens-tau.vercel.app/`. Isso mantém o Render free acordado (ele dorme após 15 min sem tráfego) **sem acordar o Neon**, porque `/livez` não usa banco — e um ping a cada 15 min cabe folgado nas 750 h/mês do free, sem cold start para quem acessa. Se o site cair, o job falha e o GitHub manda e-mail de falha ao dono do repositório. O GitHub **desativa schedules após 60 dias sem atividade no repositório**; um commit ocasional (ou reativar o workflow na aba Actions) mantém o agendamento vivo.
+
+**Erros (Sentry, opcional).** Com `SENTRY_DSN` definido (segredo `sync: false` no `render.yaml`), o app reporta exceções ao Sentry (`app/__init__.py:init_sentry`). PII fica **desligada** de propósito — `send_default_pii=False` e `include_local_variables=False` — porque os feedbacks carregam texto de usuário que não deve sair para o Sentry. O tracing de performance vem de `SENTRY_TRACES_SAMPLE_RATE` (padrão `0` = só erros) e o `environment` é o `FLASK_ENV`. **Sem DSN, o Sentry não inicializa e nada muda.**
+
+### Segurança em produção
+
+**IP real do cliente (`TRUSTED_CLIENT_IP_HEADER`).** Atrás de um proxy (no deploy de referência, a Cloudflare), toda requisição chega com `request.remote_addr == 127.0.0.1`, então o rate limit por IP (login, ingestão pública) junta todos os visitantes num só balde e vira global. Defina `TRUSTED_CLIENT_IP_HEADER` com o header que o proxy reescreve (`CF-Connecting-IP` na Cloudflare) para que o limite volte a ser por-IP. Só confie num header que o proxy à frente **sempre** sobrescreve — fora desse cenário ele é forjável, por isso o padrão é vazio (usa `remote_addr`). Quando o header configurado não chega, o app registra um aviso (uma vez por processo) e cai em `remote_addr`.
+
+**Headers de segurança (`SECURITY_HEADERS_ENABLED`, true por padrão).** Toda resposta recebe `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: camera=(), microphone=(), geolocation=()`, `Cross-Origin-Opener-Policy: same-origin` e uma `Content-Security-Policy` enxuta (`frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'`) — propositalmente sem restringir `script-src`/`style-src`, que quebrariam o SPA Vue. `Strict-Transport-Security` entra só quando a requisição é HTTPS. Nenhum header já definido pela rota é sobrescrito.
+
+**Erros da API em JSON.** As rotas sob `/api` respondem `404`, `405` e `500` (e qualquer exceção não tratada) como JSON, sem vazar traceback nem mensagem interna (o detalhe fica só no log). Fora de `/api`, o SPA e as páginas web mantêm o comportamento anterior.
+
+**Senha do painel.** Em produção, uma `DASHBOARD_PASSWORD` com menos de 12 caracteres gera um aviso no boot (não derruba o serviço): troque-a por uma mais forte antes de divulgar a URL.
+
 ## Testes e CI
 
 Backend (com o ambiente virtual ativo):

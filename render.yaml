@@ -19,7 +19,11 @@ services:
     runtime: docker
     plan: free
     dockerfilePath: ./Dockerfile
-    healthCheckPath: /health
+    # /livez é liveness puro (não toca o banco), ao contrário de /health
+    # (SELECT 1). O Render bate no healthCheckPath a cada poucos segundos; com
+    # /health isso manteria o compute do Neon acordado 24/7 e esgotaria as
+    # 100 CU-h/mês do free. /livez confirma só que o processo está de pé.
+    healthCheckPath: /livez
     envVars:
       - key: FLASK_ENV
         value: production
@@ -37,6 +41,13 @@ services:
       - key: DASHBOARD_PASSWORD
         sync: false
       - key: FEEDLENS_ENCRYPTION_KEY
+        sync: false
+
+      # Sentry (observabilidade de erros), OPCIONAL. Segredo, só no painel. Sem
+      # ele o app não inicializa o Sentry e nada muda. SENTRY_TRACES_SAMPLE_RATE
+      # é config não-secreta (padrão 0 = só erros, sem traces) — defina no
+      # painel só se quiser tracing de performance.
+      - key: SENTRY_DSN
         sync: false
 
       # --- Banco: Postgres no Neon (free, sem prazo de expiração) ---
@@ -67,6 +78,14 @@ services:
         sync: false
 
       # --- Config não-secreta: valores reais de produção, versionados ---
+      # IP real do cliente para o rate limit. Todo tráfego do Render chega pela
+      # Cloudflare, que SOBRESCREVE CF-Connecting-IP com o IP do visitante (o
+      # cliente não consegue forjá-lo, pois o Render só é alcançável via
+      # Cloudflare). Sem isto, remote_addr é sempre 127.0.0.1 (o proxy) e os
+      # limites por-IP (login, ingestão pública) viram globais. Fora deste
+      # cenário com proxy confiável, deixe vazio (usa remote_addr).
+      - key: TRUSTED_CLIENT_IP_HEADER
+        value: CF-Connecting-IP
       # Origem exata do form público (Vercel). A mesma URL nas duas: sem
       # CORS_ORIGINS o navegador bloqueia a resposta; sem INGEST_PUBLIC_ORIGINS
       # o POST sem chave recebe 401 (ingest_key_required). Só origem, sem

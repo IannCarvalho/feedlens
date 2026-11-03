@@ -26,6 +26,8 @@ KNOWN_PLACEHOLDER_SECRETS = frozenset({
 })
 MIN_SECRET_KEY_LENGTH = 32
 MIN_API_TOKEN_LENGTH = 24
+# Comprimento mínimo recomendado da senha do painel em produção (só aviso).
+MIN_DASHBOARD_PASSWORD_LENGTH = 12
 
 
 def is_insecure_secret_key(secret_key: str | None) -> bool:
@@ -70,6 +72,14 @@ def validate_config(config: Type[Config]) -> None:
         logger.warning(
             'DASHBOARD_PASSWORD is not set. The dashboard is publicly '
             'accessible without authentication.')
+
+    # Senha do dashboard curta é força-bruta viável mesmo com o rate limit:
+    # avisa (não derruba o boot) para o operador trocá-la por uma mais forte.
+    if (config.is_production() and config.DASHBOARD_PASSWORD
+            and len(config.DASHBOARD_PASSWORD) < MIN_DASHBOARD_PASSWORD_LENGTH):
+        logger.warning(
+            'DASHBOARD_PASSWORD tem menos de %d caracteres: use uma senha mais '
+            'forte para o painel em produção.', MIN_DASHBOARD_PASSWORD_LENGTH)
 
     # Token de leitura da API: curto demais é força-bruta viável (o limiter
     # só cobre POST), então exige comprimento mínimo quando definido.
@@ -210,6 +220,98 @@ def register_blueprints(app: Flask) -> None:
             return jsonify({'error': 'Request body too large'}), 413
         return error
 
+    @app.errorhandler(404)
+    def not_found_handler(error):
+        """404 JSON só nas rotas /api; fora dela, o 404 HTML default do Flask.
+
+        O catch-all do SPA entrega o index para navegação, então um 404 aqui
+        em /api é uma rota de API inexistente de verdade.
+        """
+        from flask import jsonify, request
+        if request.path.startswith('/api'):
+            return jsonify({'error': 'Not found', 'code': 'not_found'}), 404
+        return error
+
+    @app.errorhandler(405)
+    def method_not_allowed_handler(error):
+        """405 JSON só nas rotas /api; fora dela, o comportamento default."""
+        from flask import jsonify, request
+        if request.path.startswith('/api'):
+            return jsonify({
+                'error': 'Method not allowed', 'code': 'method_not_allowed',
+            }), 405
+        return error
+
+    @app.errorhandler(500)
+    def internal_error_handler(error):
+        """500 JSON só nas rotas /api; fora dela, o 500 HTML default do Flask.
+
+        Nunca vaza traceback nem a mensagem interna: o detalhe fica só no log.
+        """
+        from flask import jsonify, request
+        if request.path.startswith('/api'):
+            return jsonify({'error': 'Internal server error', 'code': 'internal_error'}), 500
+        return error
+
+    @app.errorhandler(Exception)
+    def unhandled_exception_handler(error):
+        """Exceção não tratada: em /api vira 500 JSON com o stack SÓ no log.
+
+        Deixa as HTTPException passarem (são tratadas pelos handlers de status
+        acima e pelo próprio Flask), para não transformar um 404/413/429 num 500.
+        """
+        from werkzeug.exceptions import HTTPException
+        if isinstance(error, HTTPException):
+            return error
+        from flask import jsonify, request
+        logger.exception('Erro não tratado em %s %s', request.method, request.path)
+        if request.path.startswith('/api'):
+            return jsonify({'error': 'Internal server error', 'code': 'internal_error'}), 500
+        raise error
+
+    @app.after_request
+    def _security_headers(response):
+        """Headers de segurança em toda resposta (opt-out por config)."""
+        if not app.config.get('SECURITY_HEADERS_ENABLED', True):
+            return response
+        from app.security_headers import apply_security_headers
+        return apply_security_headers(response)
+
+
+def init_sentry(app: Flask) -> None:
+    """
+    Inicializa o Sentry (observabilidade de erros) — OPCIONAL.
+
+    Só faz algo quando ``SENTRY_DSN`` está definido; sem DSN, retorna sem
+    importar nada e o app roda exatamente como antes. ``sentry-sdk[flask]`` é
+    uma dependência fixa, mas a inicialização é sempre condicional.
+
+    PII fica DESLIGADA de propósito: ``send_default_pii=False`` e
+    ``include_local_variables=False``, porque os feedbacks carregam texto de
+    usuário que não deve sair para o Sentry. O tracing de performance usa
+    ``SENTRY_TRACES_SAMPLE_RATE`` (padrão 0) e o ``environment`` é o FLASK_ENV.
+
+    Args:
+        app: Flask application instance
+    """
+    dsn = app.config.get('SENTRY_DSN')
+    if not dsn:
+        logger.info('Sentry disabled (SENTRY_DSN not set)')
+        return
+
+    import sentry_sdk
+    from sentry_sdk.integrations.flask import FlaskIntegration
+
+    sentry_sdk.init(
+        dsn=dsn,
+        integrations=[FlaskIntegration()],
+        send_default_pii=False,
+        include_local_variables=False,
+        traces_sample_rate=app.config.get('SENTRY_TRACES_SAMPLE_RATE', 0.0),
+        environment=app.config.get('FLASK_ENV'),
+    )
+    logger.info('Sentry initialized (environment=%s)', app.config.get('FLASK_ENV'))
+
 
 def init_scheduler(app: Flask) -> None:
     """
@@ -257,6 +359,10 @@ def create_app(config_class: Type[Config] = Config) -> Flask:
     try:
         # Validate configuration
         validate_config(config_class)
+
+        # Observabilidade de erros (opcional): antes do resto, para capturar
+        # também falhas de inicialização. No-op sem SENTRY_DSN.
+        init_sentry(app)
 
         # Initialize components
         init_extensions(app)

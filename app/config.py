@@ -235,6 +235,28 @@ class Config:
     # Default '*' porque a API é pública (ingestão + consulta de feedbacks).
     CORS_ORIGINS: List[str] = get_env_list('CORS_ORIGINS', ['*'])
 
+    # Sentry (observabilidade de erros, OPCIONAL). Sem SENTRY_DSN, nada é
+    # inicializado e o app se comporta exatamente como antes. send_default_pii
+    # e include_local_variables ficam DESLIGADOS de propósito: os feedbacks
+    # carregam texto de usuário e as variáveis locais o exporiam no Sentry.
+    SENTRY_DSN: Optional[str] = os.environ.get('SENTRY_DSN') or None
+    # Amostragem de tracing de performance (0.0–1.0). Padrão 0 = sem traces,
+    # só captura de erros — o plano free do Sentry tem cota baixa de spans.
+    SENTRY_TRACES_SAMPLE_RATE: float = float(
+        os.environ.get('SENTRY_TRACES_SAMPLE_RATE', '0') or '0')
+
+    # Header de onde ler o IP real do cliente (ex.: CF-Connecting-IP). Vazio =
+    # comportamento histórico (usa request.remote_addr direto). Atrás de um
+    # proxy que SOBRESCREVE este header (Cloudflare), ele traz o IP do visitante
+    # em vez do 127.0.0.1 do proxy, então o rate limit volta a ser por-IP em vez
+    # de global. Só confie num header que o proxy à sua frente SEMPRE reescreve;
+    # fora disso é forjável. Ver app/client_ip.py.
+    TRUSTED_CLIENT_IP_HEADER: str = os.environ.get('TRUSTED_CLIENT_IP_HEADER', '').strip()
+
+    # Headers de segurança HTTP aplicados em todas as respostas (after_request).
+    # true por padrão; desligue só para depurar um header específico.
+    SECURITY_HEADERS_ENABLED: bool = get_env_bool('SECURITY_HEADERS_ENABLED', True)
+
     @classmethod
     def is_development(cls) -> bool:
         """Check if running in development environment"""
