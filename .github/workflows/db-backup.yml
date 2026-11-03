@@ -1,0 +1,81 @@
+name: DB Backup
+
+# Backup diário do Postgres (Neon) para fora do Neon. O histórico de instant
+# restore do Neon free cobre só ~6 h; este dump dá um ponto de recuperação
+# independente, guardado como artefato do GitHub por 30 dias.
+#
+# O artefato é CIFRADO (AES-256) porque este repositório é PÚBLICO: qualquer
+# pessoa pode baixar artefatos de um repo público, e o dump contém todos os
+# dados. A chave (BACKUP_PASSPHRASE) nunca sai do segredo do GitHub.
+
+on:
+  schedule:
+    # Todo dia às 06:00 UTC (03:00 America/Sao_Paulo).
+    - cron: '0 6 * * *'
+  workflow_dispatch: {}
+
+# Só a main tem o DATABASE_URL de produção; não rodar em forks/branches.
+jobs:
+  backup:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Instala o cliente do PostgreSQL 18 (PGDG)
+        # pg_dump precisa ser >= servidor (Neon roda PostgreSQL 18); o pacote
+        # do Ubuntu é mais antigo, entao usamos o repositorio oficial PGDG.
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends curl ca-certificates gnupg lsb-release
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo gpg --dearmor -o /usr/share/keyrings/pgdg.gpg
+          echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-client-18
+          pg_dump --version
+
+      - name: Confere os segredos obrigatorios
+        env:
+          NEON_BACKUP_DATABASE_URL: ${{ secrets.NEON_BACKUP_DATABASE_URL }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          missing=0
+          if [ -z "${NEON_BACKUP_DATABASE_URL:-}" ]; then
+            echo "::error::Segredo NEON_BACKUP_DATABASE_URL nao configurado."
+            missing=1
+          fi
+          if [ -z "${BACKUP_PASSPHRASE:-}" ]; then
+            echo "::error::Segredo BACKUP_PASSPHRASE nao configurado."
+            missing=1
+          fi
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Dump + cifra
+        env:
+          NEON_BACKUP_DATABASE_URL: ${{ secrets.NEON_BACKUP_DATABASE_URL }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          # set +x de proposito: a URL do banco (com senha) NUNCA deve aparecer
+          # no log do job. Nada de echo da URL. pipefail para o pg_dump falhar
+          # alto se cair no meio do pipe.
+          set +x
+          set -euo pipefail
+          out="feedlens-$(date -u +%Y%m%dT%H%M%SZ).dump.enc"
+          echo "out=$out" >> "$GITHUB_ENV"
+          pg_dump --format=custom --no-owner "$NEON_BACKUP_DATABASE_URL" \
+            | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt \
+                -pass env:BACKUP_PASSPHRASE -out "$out"
+          test -s "$out"
+          ls -la "$out"
+
+      - name: Upload do artefato cifrado
+        uses: actions/upload-artifact@v4
+        with:
+          name: feedlens-db-backup
+          path: ${{ env.out }}
+          retention-days: 30
+          if-no-files-found: error

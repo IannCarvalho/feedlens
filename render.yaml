@@ -19,7 +19,11 @@ services:
     runtime: docker
     plan: free
     dockerfilePath: ./Dockerfile
-    healthCheckPath: /health
+    # /livez é liveness puro (não toca o banco), ao contrário de /health
+    # (SELECT 1). O Render bate no healthCheckPath a cada poucos segundos; com
+    # /health isso manteria o compute do Neon acordado 24/7 e esgotaria as
+    # 100 CU-h/mês do free. /livez confirma só que o processo está de pé.
+    healthCheckPath: /livez
     envVars:
       - key: FLASK_ENV
         value: production
@@ -37,6 +41,13 @@ services:
       - key: DASHBOARD_PASSWORD
         sync: false
       - key: FEEDLENS_ENCRYPTION_KEY
+        sync: false
+
+      # Sentry (observabilidade de erros), OPCIONAL. Segredo, só no painel. Sem
+      # ele o app não inicializa o Sentry e nada muda. SENTRY_TRACES_SAMPLE_RATE
+      # é config não-secreta (padrão 0 = só erros, sem traces) — defina no
+      # painel só se quiser tracing de performance.
+      - key: SENTRY_DSN
         sync: false
 
       # --- Banco: Postgres no Neon (free, sem prazo de expiração) ---

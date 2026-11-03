@@ -1,0 +1,33 @@
+name: Uptime
+
+# Monitor de uptime a cada 15 min. Dois efeitos:
+#  1. Mantem o Render free ACORDADO (ele dorme apos 15 min sem trafego). Como
+#     bate em /livez, que NAO toca o banco, nao acorda o compute do Neon — logo
+#     nao gasta CU-h. Um ping a cada 15 min cabe folgado nas 750 h/mes do free.
+#  2. Se o site cair, o job falha e o GitHub manda e-mail de falha ao dono do
+#     repositorio (notificacao padrao de workflow que falha).
+#
+# ATENCAO: o GitHub DESATIVA schedules apos 60 dias sem atividade no repo
+# (commits/pushes). Um commit ocasional, ou reativar o workflow na aba Actions,
+# mantem o agendamento vivo.
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Backend (/livez, sem banco)
+        run: |
+          set -euo pipefail
+          curl -fsS --retry 3 --retry-delay 30 --max-time 90 \
+            https://feedlens.onrender.com/livez
+
+      - name: Frontend (Vercel)
+        run: |
+          set -euo pipefail
+          curl -fsS --retry 3 --retry-delay 30 --max-time 90 \
+            https://feedlens-tau.vercel.app/
