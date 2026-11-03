@@ -63,7 +63,7 @@ def validate_config(config: Type[Config]) -> None:
     # Check email configuration if in production
     if config.is_production() and not config.has_email_config():
         logger.warning(
-            'Email is not configured: the weekly summary will not be sent.')
+            'Email is not configured: the monthly summary will not be sent.')
 
     # Warn when the dashboard is left open in production
     if config.is_production() and not config.DASHBOARD_PASSWORD:
@@ -216,7 +216,7 @@ def init_scheduler(app: Flask) -> None:
     Initialize background task scheduler
 
     Opt-in (``SCHEDULER_ENABLED``): só um processo por deploy deve agendar o
-    resumo semanal, senão cada worker envia o seu e-mail. Veja app/scheduling.py.
+    resumo mensal, senão cada worker envia o seu e-mail. Veja app/scheduling.py.
 
     Args:
         app: Flask application instance
@@ -226,9 +226,9 @@ def init_scheduler(app: Flask) -> None:
         return
 
     if not scheduler.running:
-        from app.scheduling import schedule_weekly_summary
+        from app.scheduling import schedule_monthly_summary
         try:
-            schedule_weekly_summary(scheduler, app)
+            schedule_monthly_summary(scheduler, app)
             scheduler.start()
             logger.info('Background scheduler started successfully')
         except Exception as e:

@@ -69,7 +69,7 @@ flowchart TD
     llmlayer["app/llm<br/>(cadeia de provedores · LiteLLM)"]
     llm{{"OpenAI · Anthropic · Gemini · Groq · OpenRouter"}}
     db[("PostgreSQL ou SQLite")]
-    mail["SMTP<br/>(resumo semanal)"]
+    mail["SMTP<br/>(resumo mensal)"]
 
     customer --> form
     form -- "POST /api/feedbacks {id, feedback}" --> api
@@ -78,7 +78,7 @@ flowchart TD
     api --> llmlayer
     llmlayer -- "qual chave e modelo respondem" --> llm
     api --> db
-    api -. resumo semanal .-> mail
+    api -. resumo mensal .-> mail
 
     classDef py fill:#2b6cb0,stroke:#1a365d,color:#fff;
     classDef js fill:#b7791f,stroke:#744210,color:#fff;
@@ -279,7 +279,7 @@ anteriores.
 
 A IA erra, e o custo do erro é assimétrico: um falso positivo de spam faz um
 feedback legítimo sumir. Então o que ela marca como spam fica **fora das listas, dos
-gráficos e do resumo semanal por padrão**, mas continua no banco e pode ser visto
+gráficos e do resumo mensal por padrão**, mas continua no banco e pode ser visto
 (`?spam=include` ou `?spam=only`; no painel, o filtro "Sem spam / Com spam / Só
 spam"). No detalhe, o operador corrige a classificação ("Não é spam", "Marcar como
 spam") e o sentimento.
@@ -292,7 +292,7 @@ funcionalidades continuam os da análise.
 
 ### 3.6 Um único agendador por deploy
 
-O resumo semanal sai toda segunda-feira, às 8h (`SCHEDULER_TIMEZONE`). Com mais de um
+O resumo mensal sai no dia 1 de cada mês, às 8h (`SCHEDULER_TIMEZONE`), e cobre o mês civil anterior. Com mais de um
 processo agendando, cada um enviaria o seu e-mail, então o deploy escolhe **um**
 dono do agendamento:
 
@@ -304,7 +304,7 @@ dono do agendamento:
 - **Vários workers ou réplicas:** `SCHEDULER_ENABLED=false` no web, um processo
   dedicado com `python -m app.scheduling` e `RATELIMIT_STORAGE_URI` apontando para um
   Redis.
-- **Sob demanda ou por cron externo:** `flask send-weekly-summary`.
+- **Sob demanda ou por cron externo:** `flask send-monthly-summary`.
 
 O texto do resumo é gerado por LLM, com fallback para um template estático quando a
 geração falha ou não há chave configurada. O HTML passa por sanitização (`nh3`): só

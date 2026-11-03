@@ -85,7 +85,7 @@ services:
       - key: LLM_MODELS
         value: openrouter/google/gemma-4-31b-it:free,groq/openai/gpt-oss-20b,openrouter/openrouter/free
 
-      # --- Resumo semanal por e-mail (segunda, 08:00, America/Sao_Paulo) ---
+      # --- Resumo mensal por e-mail (dia 1, 08:00, America/Sao_Paulo) ---
       # O Render free BLOQUEIA a saída SMTP nas portas 25, 465 e 587 (desde
       # 26/09/2025), então Gmail/587 dá timeout. O relay do Brevo (grátis,
       # 300/dia) aceita a 2525 com STARTTLS.

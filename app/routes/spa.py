@@ -4,7 +4,7 @@ O SPA é servido em ``/`` e assume o roteamento do painel (Vue Router em
 history mode, base ``/``); os assets saem de ``/static/spa`` (Vite ``base``,
 gerados pelo ``vite build``). As rotas Jinja antigas (``/dashboard``,
 ``/feedbacks``, ``/feedback/<id>``) viram redirects para o SPA, preservando
-links salvos e o link do e-mail do resumo semanal (ver ``app/routes/web.py``).
+links salvos e o link do e-mail do resumo mensal (ver ``app/routes/web.py``).
 
 A tela de login também é do SPA, mas é a única rota PÚBLICA dele: quem a
 entrega é ``GET /login`` (``app/auth.py``), via ``serve_index``. As demais

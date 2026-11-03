@@ -5,6 +5,8 @@ import ssl
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
 from sqlalchemy import func
 
 from app import db
@@ -16,25 +18,46 @@ logger = logging.getLogger(__name__)
 
 REASON_SEPARATOR = ' | '
 
+MONTHS_PT = ('janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho',
+             'agosto', 'setembro', 'outubro', 'novembro', 'dezembro')
 
-def generate_weekly_summary():
+
+def previous_month_window(now=None, tz_name=None):
+    """Mês civil ANTERIOR a ``now``, no fuso do agendador.
+
+    O resumo sai no dia 1 e cobre o mês que acabou de fechar: rodado em 1º de
+    novembro às 8h, cobre de 1º/10 00:00 a 1º/11 00:00 (fim exclusivo), no fuso
+    ``SCHEDULER_TIMEZONE``. Rodado à mão no meio do mês, cobre o mês anterior
+    inteiro, nunca um mês pela metade.
+
+    Returns:
+        (início UTC, fim UTC exclusivo, rótulo como "outubro de 2026")
     """
-    Generates a summary of feedback from the last week
+    tz = ZoneInfo(tz_name or Config.SCHEDULER_TIMEZONE)
+    local_now = (now or datetime.now(timezone.utc)).astimezone(tz)
+    end_local = local_now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    start_local = (end_local - timedelta(days=1)).replace(day=1)
+    label = f"{MONTHS_PT[start_local.month - 1]} de {start_local.year}"
+    return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc), label
+
+
+def generate_monthly_summary(now=None):
+    """
+    Generates a summary of feedback from the previous calendar month
 
     Contagens e motivos saem de agregações no banco (GROUP BY), em vez de
-    carregar cada feedback da semana para a memória só para contá-los.
+    carregar cada feedback do mês para a memória só para contá-los.
 
     Returns:
         dict: Dictionary with feedback statistics and summary
     """
-    # Define the last week period
-    end_date = datetime.now(timezone.utc)
-    start_date = end_date - timedelta(days=7)
+    start_date, end_date, period_label = previous_month_window(now)
     # Mesmo critério do dashboard (statistics_service, analyzed_only): fora os
     # feedbacks que a IA não analisou, cujo sentimento é só o valor padrão e não
     # uma opinião. Antes o resumo só ignorava spam e os contava como Inconclusivos.
     in_window = (
-        Feedback.created_at.between(start_date, end_date),
+        Feedback.created_at >= start_date,
+        Feedback.created_at < end_date,
         Feedback.is_spam == False,
         Feedback.analysis_status == ANALYSIS_ANALYZED,
     )
@@ -48,6 +71,7 @@ def generate_weekly_summary():
     # If no feedback, return empty summary
     if total_feedbacks == 0:
         return {
+            'period_label': period_label,
             'total_feedbacks': 0,
             'positive_count': 0,
             'negative_count': 0,
@@ -81,6 +105,7 @@ def generate_weekly_summary():
 
     # Return statistics
     return {
+        'period_label': period_label,
         'total_feedbacks': total_feedbacks,
         'positive_count': positive_count,
         'negative_count': negative_count,
@@ -100,9 +125,11 @@ def generate_email_content(stats):
     Returns:
         str: HTML email content
     """
+    period = stats.get('period_label', 'no último mês')
+
     # Return early if no feedback
     if stats['total_feedbacks'] == 0:
-        return "<p>Nenhum feedback recebido essa semana.</p>"
+        return f"<p>Nenhum feedback recebido em {html.escape(period)}.</p>"
 
     total = stats['total_feedbacks']
     positive_count = stats.get(
@@ -120,7 +147,7 @@ def generate_email_content(stats):
             features_html += f"<li><strong>{code}</strong> (Mencionada {feature['count']} vezes)</li>"
         features_html += "</ul>"
     else:
-        features_html = "<p>Nenhuma funcionalidade foi solicitada com frequência esta semana.</p>"
+        features_html = f"<p>Nenhuma funcionalidade foi solicitada com frequência em {html.escape(period)}.</p>"
 
     dashboard_html = ""
     if Config.APP_BASE_URL:
@@ -131,11 +158,11 @@ def generate_email_content(stats):
     email_content = f"""
     <html>
     <body>
-        <h2>Resumo Semanal de Feedback - FeedLens</h2>
+        <h2>Resumo Mensal de Feedback - FeedLens</h2>
 
         <p>Prezada equipe,</p>
 
-        <p>Este é o resumo automático dos feedbacks recebidos na última semana.</p>
+        <p>Este é o resumo automático dos feedbacks recebidos em {html.escape(period)}.</p>
 
         <h3>Estatísticas Gerais</h3>
         <p>Total de feedbacks: <strong>{total}</strong></p>
@@ -156,7 +183,7 @@ def generate_email_content(stats):
 
 
 def generate_email_content_llm(stats):
-    """Generate the weekly summary email body with help from an LLM.
+    """Generate the monthly summary email body with help from an LLM.
 
     Builds a short prompt from the already-computed stats and asks the model to
     write a concise HTML summary in Portuguese. On ANY failure (no API key,
@@ -164,7 +191,7 @@ def generate_email_content_llm(stats):
     generate_email_content, so e-mail delivery is never blocked by the LLM.
 
     Args:
-        stats (dict): Feedback statistics (same shape as generate_weekly_summary).
+        stats (dict): Feedback statistics (same shape as generate_monthly_summary).
 
     Returns:
         str: HTML email content.
@@ -206,7 +233,7 @@ MAX_REASONS_PER_FEATURE = 3
 REASON_PREVIEW_CHARS = 200
 
 EMAIL_SYSTEM_PROMPT = (
-    "Você escreve o resumo semanal de feedbacks de um produto para os stakeholders. "
+    "Você escreve o resumo mensal de feedbacks de um produto para os stakeholders. "
     "Escreva um e-mail curto e profissional em português, em HTML simples: apenas "
     "<h2>, <h3>, <p>, <ul>, <li>, <strong> e <em>, sem <html>/<body>, sem links e sem "
     "imagens. Para cada funcionalidade pedida, explique em uma frase por que ela importa, "
@@ -216,12 +243,13 @@ EMAIL_SYSTEM_PROMPT = (
 
 
 def build_email_messages(stats):
-    """Números da semana + até 3 motivos reais por funcionalidade.
+    """Números do mês + até 3 motivos reais por funcionalidade.
 
     Antes o modelo recebia só o código e a contagem e inventava o "porquê";
     agora ele resume o que os usuários de fato escreveram.
     """
     lines = [
+        f"Período: {stats.get('period_label', 'último mês')}",
         f"Total de feedbacks: {stats['total_feedbacks']}",
         f"Positivos: {stats['positive_percentage']:.1f}%",
         f"Negativos: {stats['negative_percentage']:.1f}%",
@@ -255,9 +283,9 @@ def sanitize_email_html(fragment):
     return nh3.clean(text, tags=EMAIL_ALLOWED_TAGS, attributes={}).strip()
 
 
-def send_weekly_summary_email():
+def send_monthly_summary_email():
     """
-    Generates and sends weekly summary email
+    Generates and sends the monthly summary email (previous calendar month)
 
     Returns:
         bool: True if email sent successfully, False otherwise
@@ -269,11 +297,11 @@ def send_weekly_summary_email():
 
     # Check if there are configured recipients
     if not Config.EMAIL_RECIPIENTS:
-        logger.warning("No recipients configured for weekly summary")
+        logger.warning("No recipients configured for monthly summary")
         return False
 
-    # Generate week's statistics
-    stats = generate_weekly_summary()
+    # Generate the previous month's statistics
+    stats = generate_monthly_summary()
 
     # Generate email content (LLM with graceful fallback to the static template)
     email_content = generate_email_content_llm(stats)
@@ -282,7 +310,7 @@ def send_weekly_summary_email():
     # num relay como o Brevo o login é técnico e o From é o endereço verificado.
     sender = Config.EMAIL_FROM or Config.EMAIL_USER
     msg = MIMEMultipart('alternative')
-    msg['Subject'] = f"Resumo semanal de feedbacks - FeedLens ({datetime.now().strftime('%Y-%m-%d')})"
+    msg['Subject'] = f"Resumo mensal de feedbacks - FeedLens ({stats['period_label']})"
     msg['From'] = sender
     msg['To'] = ", ".join(Config.EMAIL_RECIPIENTS)
 

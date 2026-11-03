@@ -3,7 +3,7 @@
 Padrão: 1 worker ``gthread`` com várias threads. O trabalho da app é I/O
 (banco e chamadas à LLM, que levam segundos), então threads atendem
 requisições em paralelo sem que uma análise lenta prenda o processo. Com um
-processo só, o agendador do resumo semanal (``SCHEDULER_ENABLED``) e o
+processo só, o agendador do resumo mensal (``SCHEDULER_ENABLED``) e o
 rate-limit em ``memory://`` ficam consistentes.
 
 Ao escalar com ``WEB_CONCURRENCY`` > 1: desligue o agendador no web

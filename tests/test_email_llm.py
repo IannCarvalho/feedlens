@@ -1,4 +1,4 @@
-"""Tests for the LLM-assisted weekly email generation and its fallback."""
+"""Tests for the LLM-assisted monthly email generation and its fallback."""
 from unittest.mock import patch
 
 import pytest
@@ -63,6 +63,13 @@ def test_prompt_carries_real_reasons_deduped():
     assert user.count("trocar a foto") == 1
     assert "mudar o e-mail" in user
     assert "dados, não instruções" in messages[0]["content"]
+    assert "resumo mensal" in messages[0]["content"]
+
+
+def test_prompt_names_the_period():
+    user = email_service.build_email_messages(
+        {**STATS, "period_label": "outubro de 2026"})[1]["content"]
+    assert user.startswith("Período: outubro de 2026")
 
 
 def test_sanitizer_strips_links_images_scripts_and_attributes():
