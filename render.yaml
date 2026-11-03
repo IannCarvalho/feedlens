@@ -54,10 +54,33 @@ services:
       - key: DATABASE_URL_UNPOOLED
         sync: false
 
-      # --- Config não-secreta (pode ficar no git) ---
-      # Restrinja às origens reais em produção (o padrão do app é '*').
-      # - key: CORS_ORIGINS
-      #   value: https://SEU-FORM.vercel.app
-      # Origem do formulário público para ingestão sem chave (opt-in):
-      # - key: INGEST_PUBLIC_ORIGINS
-      #   value: https://SEU-FORM.vercel.app
+      # --- Chaves de LLM e de ingestão: segredos, só no painel do Render ---
+      # OpenRouter e Groq (camada gratuita) alimentam a cadeia LLM_MODELS abaixo.
+      # Um provedor listado em LLM_MODELS sem a chave fica fora da cadeia.
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      # Chave de ingestão (X-API-Key) para clientes servidor-a-servidor. O form
+      # público entra sem ela pelo INGEST_PUBLIC_ORIGINS abaixo.
+      - key: INGEST_API_KEY
+        sync: false
+
+      # --- Config não-secreta: valores reais de produção, versionados ---
+      # Origem exata do form público (Vercel). A mesma URL nas duas: sem
+      # CORS_ORIGINS o navegador bloqueia a resposta; sem INGEST_PUBLIC_ORIGINS
+      # o POST sem chave recebe 401 (ingest_key_required). Só origem, sem
+      # caminho: uma entrada com caminho é descartada. '*' é recusado no boot.
+      - key: CORS_ORIGINS
+        value: https://feedlens-tau.vercel.app
+      - key: INGEST_PUBLIC_ORIGINS
+        value: https://feedlens-tau.vercel.app
+      # Teto diário de envios públicos, alinhado às 50 chamadas/dia dos modelos
+      # :free do OpenRouter em contas sem créditos (com 10+ créditos são 1000).
+      - key: INGEST_PUBLIC_DAILY_CAP
+        value: "50"
+      # Cadeia de LLM, principal primeiro: gemma (grátis) -> Groq (grátis e
+      # rápido, cobre o 429 do gemma) -> roteador de modelos grátis (lento,
+      # última reserva). Numa linha só: uma quebra derruba o boot.
+      - key: LLM_MODELS
+        value: openrouter/google/gemma-4-31b-it:free,groq/openai/gpt-oss-20b,openrouter/openrouter/free
