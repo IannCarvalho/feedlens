@@ -196,6 +196,10 @@ class Config:
     EMAIL_USER: Optional[str] = os.environ.get('EMAIL_USER')
     EMAIL_PASSWORD: Optional[str] = os.environ.get('EMAIL_PASSWORD')
     EMAIL_USE_TLS: bool = get_env_bool('EMAIL_USE_TLS', True)
+    # Remetente do e-mail. Vazio = EMAIL_USER (comportamento antigo, que serve
+    # ao Gmail). Relays como o Brevo usam um login técnico (xxx@smtp-brevo.com)
+    # que não é um remetente válido: ali o From é um endereço verificado.
+    EMAIL_FROM: Optional[str] = os.environ.get('EMAIL_FROM') or None
 
     # Email recipients for weekly summary
     EMAIL_RECIPIENTS: List[str] = get_env_list('EMAIL_RECIPIENTS')
