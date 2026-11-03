@@ -730,6 +730,16 @@ pg_restore --clean --no-owner --dbname "$TARGET_DATABASE_URL" feedlens.dump
 
 **Erros (Sentry, opcional).** Com `SENTRY_DSN` definido (segredo `sync: false` no `render.yaml`), o app reporta exceções ao Sentry (`app/__init__.py:init_sentry`). PII fica **desligada** de propósito — `send_default_pii=False` e `include_local_variables=False` — porque os feedbacks carregam texto de usuário que não deve sair para o Sentry. O tracing de performance vem de `SENTRY_TRACES_SAMPLE_RATE` (padrão `0` = só erros) e o `environment` é o `FLASK_ENV`. **Sem DSN, o Sentry não inicializa e nada muda.**
 
+### Segurança em produção
+
+**IP real do cliente (`TRUSTED_CLIENT_IP_HEADER`).** Atrás de um proxy (no deploy de referência, a Cloudflare), toda requisição chega com `request.remote_addr == 127.0.0.1`, então o rate limit por IP (login, ingestão pública) junta todos os visitantes num só balde e vira global. Defina `TRUSTED_CLIENT_IP_HEADER` com o header que o proxy reescreve (`CF-Connecting-IP` na Cloudflare) para que o limite volte a ser por-IP. Só confie num header que o proxy à frente **sempre** sobrescreve — fora desse cenário ele é forjável, por isso o padrão é vazio (usa `remote_addr`). Quando o header configurado não chega, o app registra um aviso (uma vez por processo) e cai em `remote_addr`.
+
+**Headers de segurança (`SECURITY_HEADERS_ENABLED`, true por padrão).** Toda resposta recebe `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: camera=(), microphone=(), geolocation=()`, `Cross-Origin-Opener-Policy: same-origin` e uma `Content-Security-Policy` enxuta (`frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'`) — propositalmente sem restringir `script-src`/`style-src`, que quebrariam o SPA Vue. `Strict-Transport-Security` entra só quando a requisição é HTTPS. Nenhum header já definido pela rota é sobrescrito.
+
+**Erros da API em JSON.** As rotas sob `/api` respondem `404`, `405` e `500` (e qualquer exceção não tratada) como JSON, sem vazar traceback nem mensagem interna (o detalhe fica só no log). Fora de `/api`, o SPA e as páginas web mantêm o comportamento anterior.
+
+**Senha do painel.** Em produção, uma `DASHBOARD_PASSWORD` com menos de 12 caracteres gera um aviso no boot (não derruba o serviço): troque-a por uma mais forte antes de divulgar a URL.
+
 ## Testes e CI
 
 Backend (com o ambiente virtual ativo):
